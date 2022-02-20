@@ -39,24 +39,31 @@ using CryptoPP::GCM;
 
 class gcm_crypto_context {
     public:
-    //96 bit IV are recommended for gcm (better performance)
-    CryptoPP::byte iv[12] =  {0x30, 0x4d, 0x90, 0xb8, 0x46, 0x1f, 0x11, 0x2e,
-        0x57, 0x06, 0xc9, 0xf3}; //static for now
+    //96 bit IV are recommended for gcm (better performance) - for now, we use 64 bit salt and 32 bit nonce (LCM seqno)
+    CryptoPP::byte salt[8];
 
     CryptoPP::byte key[ 16 ] = {
-0x02, 0x6b, 0x18, 0x0d, 0xfd, 0x17, 0x1d, 0xc9,
+0x01, 0x6b, 0x18, 0x0d, 0xfd, 0x17, 0x1d, 0xc9,
 0x23, 0x85, 0xbe, 0xee, 0xb2, 0x78, 0x2e, 0xcf }; //static 128 bit key for now
 
     const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
 
-//    gcm_crypto_context () {
-//        AutoSeededRandomPool prng;
+    gcm_crypto_context () {
+        AutoSeededRandomPool prng;
 //        prng.GenerateBlock( key, sizeof(key) );
-//        prng.GenerateBlock( iv, sizeof(iv) );    
-//   }
-
+        prng.GenerateBlock( salt, sizeof(salt) );    
+   }
 };
 gcm_crypto_context crypto_ctx;
+
+extern "C" uint64_t get_salt() {
+    return *(uint64_t*) crypto_ctx.salt;
+}
+
+extern "C" void create_IV(IV* iv, uint64_t salt, const uint32_t seqno) {
+    memcpy(iv->data, &salt, 8);
+    memcpy(iv->data+8, &seqno, 4);
+}
 
 void prettyprint_hex(char* data, size_t size, const char* msg_string) {
     std::string encoded;
@@ -81,14 +88,13 @@ void prettyprint_base64(char* data, size_t size, const char* msg_string) {
     cout << msg_string << encoded;
 }
 
-extern "C" int encrypt(char * ptext, size_t ptextsize, char * ctext, size_t ctextsize) {
-
+extern "C" int encrypt(char * ptext, size_t ptextsize, const IV * iv, char * ctext, size_t ctextsize) {
     try
     {
         std::cout << "plain text: " << ptext << std::endl;
 
         GCM< AES >::Encryption e;
-        e.SetKeyWithIV( crypto_ctx.key, sizeof(crypto_ctx.key), crypto_ctx.iv, sizeof(crypto_ctx.iv) );
+        e.SetKeyWithIV( crypto_ctx.key, sizeof(crypto_ctx.key), iv->data, sizeof(iv->data) );
         // e.SpecifyDataLengths( 0, pdata.size(), 0 );
 
         StringSource((CryptoPP::byte*)ptext, ptextsize, true,
@@ -116,10 +122,10 @@ extern "C" int encrypt(char * ptext, size_t ptextsize, char * ctext, size_t ctex
     return 0;
 }
 
-int decrypt(char * ctext, size_t ctextsize, char * ptext, size_t ptextsize) {
+int decrypt(char * ctext, size_t ctextsize, const IV* iv, char * ptext, size_t ptextsize) {
     try {
         GCM< AES >::Decryption d;
-        d.SetKeyWithIV( crypto_ctx.key, sizeof(crypto_ctx.key), crypto_ctx.iv, sizeof(crypto_ctx.iv) );
+        d.SetKeyWithIV( crypto_ctx.key, sizeof(crypto_ctx.key), iv->data, sizeof(iv->data) );
         // d.SpecifyDataLengths( 0, cipher.size()-TAG_SIZE, 0 );
 
         prettyprint_base64(ctext, ctextsize, "decrypt: ctext is ");

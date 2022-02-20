@@ -344,10 +344,7 @@ static int _recv_message_fragment(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
         lcmb->recv_utime = fbuf->last_packet_utime;
 
         //decrypt
-        printf("decrypt fragmented\n");
-        for (int i = lcmb->data_offset; i < lcmb->data_size; ++i) {
-            lcmb->buf[i] ^= 0x11;
-        }
+        printf("decrypt fragmented: Unimplemented\n"); //FIXME
 
         // don't need the fragment buffer anymore
         lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
@@ -362,6 +359,10 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 {
     lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
 
+    uint32_t seqno = ntohl(hdr2->msg_seqno);
+    uint64_t salt = hdr2->salt;
+
+    printf("salt %lu, seqno %u\n", salt, seqno);
     // shouldn't have to worry about buffer overflow here because we
     // zeroed out byte #65536, which is never written to by recv
     const char *pkt_channel_str = (char *) (hdr2 + 1);
@@ -383,7 +384,11 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
     //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
     memset(rptext_buf, 0, lcmb->data_size);
-    int auth_result = decrypt(ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
+
+    IV iv;
+    create_IV(&iv, salt, seqno);
+
+    int auth_result = decrypt(ctext, lcmb->data_size, &iv, rptext_buf, lcmb->data_size);
     if(auth_result == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
         printf("Could not authenticate packet, dropping...\n");
@@ -616,11 +621,15 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
                             unsigned int datalen)
 {
     printf("encrypt msg; datalen %u, channel %s, seqno %u\n", datalen, channel, lcm->msg_seqno);
+    printf("salt %lu, seqno %u\n", get_salt(), lcm->msg_seqno);
 
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
 
-    char* encrypted = malloc(ctextsize); //FIXME: malloc from ringbuffer
-    if(encrypt((char*) data, datalen, encrypted, ctextsize)) {
+    IV iv;
+    create_IV(&iv, get_salt(), lcm->msg_seqno);
+
+    char* ctext = malloc(ctextsize); //FIXME: malloc from ringbuffer
+    if(encrypt((char*) data, datalen, &iv, ctext, ctextsize)) {
         fprintf(stderr, "encryption failed!\n");
     }
 
@@ -639,13 +648,14 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
         lcm2_header_short_t hdr;
         hdr.magic = htonl(LCM2_MAGIC_SHORT);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
+        hdr.salt = get_salt();
 
         struct iovec sendbufs[3];
         sendbufs[0].iov_base = (char *) &hdr;
         sendbufs[0].iov_len = sizeof(hdr);
         sendbufs[1].iov_base = (char *) channel;
         sendbufs[1].iov_len = channel_size + 1;
-        sendbufs[2].iov_base = (char *) encrypted;
+        sendbufs[2].iov_base = (char *) ctext;
         sendbufs[2].iov_len = ctextsize;
 
         // transmit
