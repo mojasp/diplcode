@@ -14,6 +14,7 @@ set(lcm_sources
   udpm_util.c
   lcmtypes/channel_port_map_update_t.c
   lcmtypes/channel_to_port_t.c
+  crypto_wrapper.cpp
 )
 
 set(lcm_install_headers
@@ -62,6 +63,7 @@ foreach(lcm_lib lcm lcm-static)
 
   target_link_libraries(${lcm_lib} PRIVATE
     GLib2::glib
+    ${lcm_SOURCE_DIR}/lcm/cryptopp/libcryptopp.a
     ${CMAKE_THREAD_LIBS_INIT}
   )
 endforeach()

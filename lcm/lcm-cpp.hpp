@@ -19,7 +19,6 @@
 #endif
 
 namespace lcm {
-
 /**
  * @defgroup LcmCpp C++ API Reference
  *

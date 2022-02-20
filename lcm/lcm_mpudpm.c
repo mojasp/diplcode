@@ -771,6 +771,7 @@ static void *recv_thread(void *user)
                 lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
                 uint32_t rcvd_magic = ntohl(hdr2->magic);
                 int got_complete_message = 0;
+                
                 if (rcvd_magic == LCM2_MAGIC_SHORT)
                     got_complete_message = recv_short_message(lcm, lcmb, sz);
                 else if (rcvd_magic == LCM2_MAGIC_LONG)

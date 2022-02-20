@@ -32,6 +32,8 @@
 
 #include <glib.h>
 
+#include "crypto_wrapper.h"
+
 #include "dbg.h"
 #include "lcm.h"
 #include "lcm_internal.h"
@@ -341,6 +343,12 @@ static int _recv_message_fragment(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
         lcmb->data_size = fbuf->data_size;
         lcmb->recv_utime = fbuf->last_packet_utime;
 
+        //decrypt
+        printf("decrypt fragmented\n");
+        for (int i = lcmb->data_offset; i < lcmb->data_size; ++i) {
+            lcmb->buf[i] ^= 0x11;
+        }
+
         // don't need the fragment buffer anymore
         lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
 
@@ -366,6 +374,28 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
         return 0;
     }
 
+    lcmb->data_offset = sizeof(lcm2_header_short_t) + lcmb->channel_size + 1;
+
+    lcmb->data_size = sz - lcmb->data_offset;
+    char* rptext_buf = lcmb->buf + lcmb->data_offset;
+
+    char* ctext = malloc(lcmb->data_size); //FIXME:malloc from ringbuffer
+    memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
+    //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
+    memset(rptext_buf, 0, lcmb->data_size);
+    int auth_result = decrypt(ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
+    if(auth_result == LCMCRYPTO_INVALID_AUTH_TAG) {
+        //authentication failed
+        printf("Could not authenticate packet, dropping...\n");
+        return 0; //for some reason lcm returns 0 on error, 1 on success internally
+    }
+    if(auth_result == LCMCRYPTO_DECRYPTION_ERROR) {
+        //authentication failed
+        printf("Error decrypting packet, dropping\n");
+        return 0; //for some reason lcm returns 0 on error, 1 on success internally
+    }
+    printf("got authenticated msg\n");
+
     lcm->udp_rx++;
 
     // if the packet has no subscribers, drop the message now.
@@ -374,9 +404,6 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 
     strcpy(lcmb->channel_name, pkt_channel_str);
 
-    lcmb->data_offset = sizeof(lcm2_header_short_t) + lcmb->channel_size + 1;
-
-    lcmb->data_size = sz - lcmb->data_offset;
     return 1;
 }
 
@@ -588,13 +615,22 @@ static int lcm_udpm_subscribe(lcm_udpm_t *lcm, const char *channel)
 static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
                             unsigned int datalen)
 {
+    printf("encrypt msg; datalen %u, channel %s, seqno %u\n", datalen, channel, lcm->msg_seqno);
+
+    size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
+
+    char* encrypted = malloc(ctextsize); //FIXME: malloc from ringbuffer
+    if(encrypt((char*) data, datalen, encrypted, ctextsize)) {
+        fprintf(stderr, "encryption failed!\n");
+    }
+
     int channel_size = strlen(channel);
     if (channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
         fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
         return -1;
     }
 
-    int payload_size = channel_size + 1 + datalen;
+    int payload_size = channel_size + 1 + ctextsize;
     if (payload_size <= LCM_SHORT_MESSAGE_MAX_SIZE) {
         // message is short.  send in a single packet
 
@@ -609,12 +645,12 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
         sendbufs[0].iov_len = sizeof(hdr);
         sendbufs[1].iov_base = (char *) channel;
         sendbufs[1].iov_len = channel_size + 1;
-        sendbufs[2].iov_base = (char *) data;
-        sendbufs[2].iov_len = datalen;
+        sendbufs[2].iov_base = (char *) encrypted;
+        sendbufs[2].iov_len = ctextsize;
 
         // transmit
-        int packet_size = datalen + sizeof(hdr) + channel_size + 1;
-        dbg(DBG_LCM_MSG, "transmitting %d byte [%s] payload (%d byte pkt)\n", datalen, channel,
+        int packet_size = ctextsize + sizeof(hdr) + channel_size + 1;
+        dbg(DBG_LCM_MSG, "transmitting %d byte [%s] payload (%d byte pkt)\n", ctextsize, channel,
             packet_size);
 
         //        int status = writev (lcm->sendfd, sendbufs, 3);
@@ -794,7 +830,7 @@ static int udpm_self_test(lcm_udpm_t *lcm)
     lcm_subscription_t *h = lcm_subscribe(lcm->lcm, SELF_TEST_CHANNEL, self_test_handler, &success);
 
     // transmit a message
-    char *msg = "lcm self test";
+    const char *msg = strdup("lcm self test");
     lcm_udpm_publish(lcm, SELF_TEST_CHANNEL, (uint8_t *) msg, strlen(msg));
 
     // wait one second for message to be received
