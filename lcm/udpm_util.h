@@ -1,6 +1,8 @@
 #ifndef __lcm_udpm_util_h__
 #define __lcm_udpm_util_h__
 
+#include <glib.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,8 +28,6 @@ typedef int SOCKET;
 #include "windows/WinPorting.h"
 #define MSG_EXT_HDR
 #endif
-
-#include <glib.h>
 
 #include "lcm.h"
 #include "ringbuffer.h"

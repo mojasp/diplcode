@@ -59,10 +59,12 @@ foreach(lcm_lib lcm lcm-static)
   target_include_directories(${lcm_lib} INTERFACE
     $<BUILD_INTERFACE:${lcm_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+    ${BOTAN2_INCLUDE_DIRS}
   )
 
   target_link_libraries(${lcm_lib} PRIVATE
     GLib2::glib
+    Botan2::Botan2
     ${lcm_SOURCE_DIR}/lcm/cryptopp/libcryptopp.a
     ${CMAKE_THREAD_LIBS_INIT}
   )

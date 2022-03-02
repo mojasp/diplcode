@@ -8,6 +8,7 @@ if(CMAKE_VERSION VERSION_LESS 3.7)
 endif()
 
 find_package(GLib2 REQUIRED)
+find_package(Botan2 REQUIRED)
 
 # Configuration and utility functions
 include(lcm-cmake/config.cmake NO_POLICY_SCOPE)
