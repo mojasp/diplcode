@@ -1,6 +1,6 @@
 #include "crypto_wrapper.h"
-#include "cryptopp/hex.h"
-#include "udpm_util.h"
+#include <udpm_util.h>
+#include <assert.h>
 
 #include <iostream>
 using std::cout;
@@ -9,171 +9,72 @@ using std::endl;
 
 #include <string>
 
-#include "cryptopp/hex.h"
-using CryptoPP::HexEncoder;
-using CryptoPP::HexDecoder;
-#include "cryptopp/base64.h"
-using CryptoPP::Base64Encoder;
-
-#include "cryptopp/osrng.h"
-using CryptoPP::AutoSeededRandomPool;
-
-#include "cryptopp/cryptlib.h"
-using CryptoPP::BufferedTransformation;
-using CryptoPP::AuthenticatedSymmetricCipher;
-
-#include "cryptopp/filters.h"
-using CryptoPP::Redirector;
-using CryptoPP::ArraySink;
-using CryptoPP::StringSource;
-using CryptoPP::AuthenticatedEncryptionFilter;
-using CryptoPP::AuthenticatedDecryptionFilter;
-
-#include "cryptopp/aes.h"
-using CryptoPP::AES;
-
-#include "cryptopp/gcm.h"
-using CryptoPP::GCM;
-
-#include "assert.h"
+#include <botan/rng.h>
+#include <botan/auto_rng.h>
+#include <botan/hex.h>
+#include <botan/base64.h>
+#include <botan/cipher_mode.h>
 
 class gcm_crypto_context {
     public:
-    //96 bit IV are recommended for gcm (better performance) - for now, we use 64 bit salt and 32 bit nonce (LCM seqno)
-    CryptoPP::byte salt[8];
+        //96 bit IV are recommended for gcm (better performance) - for now, we use 64 bit salt and 32 bit nonce (LCM seqno)
+        std::vector<uint8_t> salt[8];
+        const std::vector<uint8_t> key = Botan::hex_decode("2B7E151628AED2A6ABF7158809CF4F3C");;
 
-    CryptoPP::byte key[ 16 ] = {
-0x01, 0x6b, 0x18, 0x0d, 0xfd, 0x17, 0x1d, 0xc9,
-0x23, 0x85, 0xbe, 0xee, 0xb2, 0x78, 0x2e, 0xcf }; //static 128 bit key for now
+        const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
 
-    const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
+        gcm_crypto_context () {
+            Botan::AutoSeeded_RNG rng;
 
-    gcm_crypto_context () {
-        AutoSeededRandomPool prng;
-//        prng.GenerateBlock( key, sizeof(key) );
-        prng.GenerateBlock( salt, sizeof(salt) );    
-   }
+            rng.random_vec(8);
+        }
 };
+
 gcm_crypto_context crypto_ctx;
 
 extern "C" uint64_t get_salt() {
-    return *(uint64_t*) crypto_ctx.salt;
+return *(uint64_t*) crypto_ctx.salt;
 }
 
 extern "C" void create_IV(IV* iv, uint64_t salt, const uint32_t seqno) {
-    memcpy(iv->data, &salt, 8);
-    memcpy(iv->data+8, &seqno, 4);
+memcpy(iv->data, &salt, 8);
+memcpy(iv->data+8, &seqno, 4);
 }
 
-void prettyprint_hex(char* data, size_t size, const char* msg_string) {
-    std::string encoded;
-    encoded.clear();
-    StringSource( (CryptoPP::byte*)data, size, true,
-        new HexEncoder(
-            new CryptoPP::StringSink( encoded )
-        ) // HexEncoder
-    ); // StringSource
-
+void prettyprint_hex(uint8_t * data, size_t size, const char* msg_string) {
+    std::string encoded = Botan::hex_encode(data, size);
     cout << msg_string << encoded << endl;
 }
-void prettyprint_base64(char* data, size_t size, const char* msg_string) {
-    std::string encoded;
-    encoded.clear();
-    StringSource( (CryptoPP::byte*)data, size, true,
-        new Base64Encoder(
-            new CryptoPP::StringSink( encoded )
-        ) // HexEncoder
-    ); // StringSource
-
-    cout << msg_string << encoded;
+void prettyprint_base64(uint8_t * data, size_t size, const char* msg_string) {
+    std::string encoded = Botan::base64_encode(data, size);
+    cout << msg_string << encoded << endl;
 }
-
 extern "C" int encrypt(char * ptext, size_t ptextsize, const IV * iv, char * ctext, size_t ctextsize) {
-    try
-    {
-        std::cout << "plain text: " << ptext << std::endl;
+    auto enc = Botan::Cipher_Mode::create("AES-128/GCM", Botan::ENCRYPTION);
 
-        GCM< AES >::Encryption e;
-        e.SetKeyWithIV( crypto_ctx.key, sizeof(crypto_ctx.key), iv->data, sizeof(iv->data) );
-        // e.SpecifyDataLengths( 0, pdata.size(), 0 );
+    enc->set_key(crypto_ctx.key);
 
-        StringSource((CryptoPP::byte*)ptext, ptextsize, true,
-            new AuthenticatedEncryptionFilter( e,
-                new ArraySink((CryptoPP::byte*) ctext, ctextsize), false, crypto_ctx.TAG_SIZE
-            ) // AuthenticatedEncryptionFilter
-        ); // StringSource
-    }
-    catch( CryptoPP::InvalidArgument& e )
-    {
-        cerr << "Caught InvalidArgument..." << endl;
-        cerr << e.what() << endl;
-        cerr << endl;
-        return LCMCRYPTO_ENCRYPTION_ERROR;
-    }
-    catch( CryptoPP::Exception& e )
-    {
-        cerr << "Caught Exception..." << endl;
-        cerr << e.what() << endl;
-        cerr << endl;
-        return LCMCRYPTO_ENCRYPTION_ERROR;
-    }
-    prettyprint_base64(ctext, ctextsize, "encrypt: ctext is ");
+    enc->start(iv->data, sizeof(iv->data));
+    Botan::secure_vector<uint8_t> ct(ptext, ptext + ptextsize);
+    enc->finish(ct);
+    printf("tagsize %i\n", enc->tag_size());
+    assert(enc->tag_size() == LCMCRYPTO_TAGSIZE);
+    //TODO: stupid implementation for now, take advantage of in-place encryption later
+    memcpy(ctext, ct.data(), ct.size());
 
+    std::cout << enc->name() << " with iv " << Botan::hex_encode(iv->data, sizeof(iv->data)) << " " << Botan::hex_encode(ct) << "\n";
     return 0;
 }
+extern "C" int decrypt(char * ctext, size_t ctextsize, const IV* iv, char * ptext, size_t ptextsize) {
+    auto dec = Botan::Cipher_Mode::create("AES-128/GCM", Botan::DECRYPTION);
+    dec->set_key(crypto_ctx.key);
 
-int decrypt(char * ctext, size_t ctextsize, const IV* iv, char * ptext, size_t ptextsize) {
-    try {
-        GCM< AES >::Decryption d;
-        d.SetKeyWithIV( crypto_ctx.key, sizeof(crypto_ctx.key), iv->data, sizeof(iv->data) );
-        // d.SpecifyDataLengths( 0, cipher.size()-TAG_SIZE, 0 );
+    dec->start(iv->data, sizeof(iv->data));
+    Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
+    dec->finish(pt);
+    //TODO: stupid implementation for now, take advantage of in-place encryption later
+    memcpy(ptext, pt.data(), pt.size());
 
-        prettyprint_base64(ctext, ctextsize, "decrypt: ctext is ");
-        AuthenticatedDecryptionFilter df( d,
-            new ArraySink((CryptoPP::byte*) ptext, ptextsize ),
-            AuthenticatedDecryptionFilter::DEFAULT_FLAGS,
-            crypto_ctx.TAG_SIZE
-        ); // AuthenticatedDecryptionFilter
-
-        // The StringSource dtor will be called immediately
-        //  after construction below. This will cause the
-        //  destruction of objects it owns. To stop the
-        //  behavior so we can get the decoding result from
-        //  the DecryptionFilter, we must use a redirector
-        //  or manually Put(...) into the filter without
-        //  using a StringSource.
-        StringSource( (CryptoPP::byte*)ctext, ctextsize, true,
-            new Redirector( df /*, PASS_EVERYTHING */ )
-        ); // StringSource
-
-        //df.Put((CryptoPP::byte*) ctext, ctextsize);
-        // If the object does not throw, here's the only
-        //  opportunity to check the data's integrity
-        if(!df.GetLastResult()) {
-            cout << "msg not authenticated" << endl;
-            return LCMCRYPTO_INVALID_AUTH_TAG;
-        }
-        return 0;
-    }
-    catch( CryptoPP::HashVerificationFilter::HashVerificationFailed& e )
-    {
-        cerr << "Caught HashVerificationFailed..." << endl;
-        cerr << e.what() << endl;
-        cerr << endl;
-        return LCMCRYPTO_INVALID_AUTH_TAG;
-    }
-    catch( CryptoPP::InvalidArgument& e )
-    {
-        cerr << "Caught InvalidArgument..." << endl;
-        cerr << e.what() << endl;
-        cerr << endl;
-        return -1;
-    }
-    catch( CryptoPP::Exception& e )
-    {
-        cerr << "Caught Exception..." << endl;
-        cerr << e.what() << endl;
-        cerr << endl;
-        return -1;
-    }
+    std::cout << dec->name() << " with iv " << Botan::hex_encode(iv->data, sizeof(iv->data)) << " " << Botan::hex_encode(pt) << "\n";
+    return 0;
 }
