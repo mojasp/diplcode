@@ -363,7 +363,6 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     uint32_t seqno = ntohl(hdr2->msg_seqno);
     uint16_t sender_id = ntohs(hdr2->sender_id);
 
-    printf("sender_id %u, seqno %u\n", sender_id, seqno);
     // shouldn't have to worry about buffer overflow here because we
     // zeroed out byte #65536, which is never written to by recv
     const char *pkt_channel_str = (char *) (hdr2 + 1);
@@ -381,6 +380,12 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     lcmb->data_size = sz - lcmb->data_offset;
     char* rptext_buf = lcmb->buf + lcmb->data_offset;
 
+
+    // if the packet has no subscribers, drop the message now.
+    if (!lcm_try_enqueue_message(lcm->lcm, pkt_channel_str))
+        return 0;
+
+    CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
     char* ctext = malloc(lcmb->data_size); //FIXME:malloc from ringbuffer
     memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
     //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
@@ -389,22 +394,14 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     int auth_result = decrypt(lcm->security_ctx, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
     if(auth_result == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
-        printf("Could not authenticate packet, dropping...\n");
+        CRYPTO_DBG("%s", "Could not authenticate packet, dropping...\n");
         return 0; //for some reason lcm returns 0 on error, 1 on success internally
     }
     if(auth_result == LCMCRYPTO_DECRYPTION_ERROR) {
         //authentication failed
-        printf("Error decrypting packet, dropping\n");
+        CRYPTO_DBG("%s", "Error decrypting packet, dropping\n");
         return 0; //for some reason lcm returns 0 on error, 1 on success internally
     }
-    printf("got authenticated msg\n");
-
-    lcm->udp_rx++;
-
-    // if the packet has no subscribers, drop the message now.
-    if (!lcm_try_enqueue_message(lcm->lcm, pkt_channel_str))
-        return 0;
-
     strcpy(lcmb->channel_name, pkt_channel_str);
 
     return 1;
@@ -618,22 +615,16 @@ static int lcm_udpm_subscribe(lcm_udpm_t *lcm, const char *channel)
 static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
                             unsigned int datalen)
 {
-
-
-    //FIXME: clean this up a bit
-    if(lcm->security_ctx) {
-        printf("encrypt msg; datalen %u, channel %s, seqno %u\n", datalen, channel, lcm->msg_seqno);
-    }
-    else {
+    if(!lcm->security_ctx) {
         //FIXME: this should be possible; also very important that the udp self-test doest not encrypt (at least not with the same nonce)
-        fprintf(stderr, "not supporting unsecured lcm udp for now, dropping message...\n");
+        CRYPTO_DBG("%s\n", "not supporting unsecured lcm udp for now, dropping message...");
         return -1;
     }
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
 
     char* ctext = malloc(ctextsize); //FIXME: malloc from ringbuffer
     if(encrypt(lcm->security_ctx, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
-        fprintf(stderr, "encryption failed!\n");
+        CRYPTO_DBG("%s\n", "encryption failed!");
         return -1;
     }
 
@@ -687,7 +678,7 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
             return status;
     } else {
         if(lcm->security_ctx) {
-            fprintf(stderr, "Security for fragmented messages not supported right now");
+            CRYPTO_DBG("%s\n", "Security for fragmented messages not supported right now");
         }
         // message is large.  fragment into multiple packets
 

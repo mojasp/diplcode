@@ -19,6 +19,11 @@ extern "C" {
 
 #define LCMCRYPTO_SESSION_NONCE_SIZE 6
 
+#define LCMCRYPTO_DEBUG 1
+
+#define CRYPTO_DBG(fmt, ...) \
+    do { if (LCMCRYPTO_DEBUG) fprintf(stderr, "lcmcrypto: " fmt, __VA_ARGS__); } while (0)
+
 typedef struct _lcm_security_ctx lcm_security_ctx; //opaque
 
 lcm_security_ctx* create_security_ctx (lcm_security_parameters* params);

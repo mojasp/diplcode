@@ -57,20 +57,13 @@ extern "C" lcm_security_ctx* create_security_ctx (lcm_security_parameters *param
 }
 extern "C" void destroy_security_ctx (lcm_security_ctx* ctx){delete ctx;}
 
-void prettyprint_hex(uint8_t * data, size_t size, const char* msg_string) {
-    std::string encoded = Botan::hex_encode(data, size);
-    cout << msg_string << encoded << endl;
-}
-void prettyprint_base64(uint8_t * data, size_t size, const char* msg_string) {
-    std::string encoded = Botan::base64_encode(data, size);
-    cout << msg_string << encoded << endl;
-}
 extern "C" int encrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ptext, size_t ptextsize, char * ctext, size_t ctextsize) {
     auto enc = Botan::Cipher_Mode::create("AES-128/GCM", Botan::ENCRYPTION);
 
     enc->set_key(ctx->key);
 
-    enc->start(ctx->create_IV(seqno));
+    auto IV = ctx->create_IV(seqno);
+    enc->start(IV);
     Botan::secure_vector<uint8_t> ct(ptext, ptext + ptextsize);
     enc->finish(ct);
     printf("tagsize %li\n", enc->tag_size());
@@ -78,19 +71,25 @@ extern "C" int encrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ptext, size
     //FIXME: stupid implementation for now, take advantage of in-place encryption later
     memcpy(ctext, ct.data(), ct.size());
 
-    std::cout << enc->name() << " " << Botan::hex_encode(ct) << "\n";
+    CRYPTO_DBG("encrypted msg using %s with IV %s\n", enc->name().c_str(), Botan::hex_encode(IV).c_str());
     return 0;
 }
 extern "C" int decrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ctext, size_t ctextsize, char * ptext, size_t ptextsize) {
     auto dec = Botan::Cipher_Mode::create("AES-128/GCM", Botan::DECRYPTION);
     dec->set_key(ctx->key);
 
-    dec->start(ctx->create_IV(seqno));
-    Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
-    dec->finish(pt);
-    //FIXME: stupid implementation for now, take advantage of in-place encryption later
-    memcpy(ptext, pt.data(), pt.size());
+    try {
+        dec->start(ctx->create_IV(seqno));
+        Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
+        dec->finish(pt);
+        //FIXME: stupid implementation for now, take advantage of in-place encryption later
+        memcpy(ptext, pt.data(), pt.size());
 
-    std::cout << dec->name() << " " << Botan::hex_encode(pt) << "\n";
+        CRYPTO_DBG("decrypted and authenticated msg using %s\n", dec->name().c_str());
+    }
+    catch(const Botan::Invalid_Authentication_Tag& err) {
+        CRYPTO_DBG("%s\n", "got msg with invalid auth tag");
+        return LCMCRYPTO_INVALID_AUTH_TAG;
+    }
     return 0;
 }
