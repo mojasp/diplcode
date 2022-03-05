@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <stdint.h>
 
+#include "lcm.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -15,20 +17,21 @@ extern "C" {
 #define LCMCRYPTO_TAGSIZE 16
 #define LCMCRYPTO_IVSIZE  12
 
+#define LCMCRYPTO_SESSION_NONCE_SIZE 6
 
-typedef struct {
-    uint8_t data[12];
-} IV;
+typedef struct _lcm_security_ctx lcm_security_ctx; //opaque
+
+lcm_security_ctx* create_security_ctx (lcm_security_parameters* params);
+
+void destroy_security_ctx (lcm_security_ctx* ctx);
 
 //returns 8 bytes
-uint64_t get_salt();
-
-void create_IV(IV* iv, uint64_t salt, const uint32_t seqno);
+const uint8_t* get_salt();
 
 //returns -1 and writes to stderr on failure
-int encrypt(char * ptext, size_t ptextsize, const IV* iv, char * ctext, size_t ctextsize);
+int encrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ptext, size_t ptextsize, char * ctext, size_t ctextsize);
 
-int decrypt(char * ctext, size_t ctextsize, const IV* iv, char * ptext, size_t ptextsize);
+int decrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ctext, size_t ctextsize, char * ptext, size_t ptextsize);
 
 #ifdef __cplusplus
 }

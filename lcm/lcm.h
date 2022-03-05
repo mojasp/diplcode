@@ -190,6 +190,44 @@ typedef void (*lcm_msg_handler_t)(const lcm_recv_buf_t *rbuf, const char *channe
 LCM_EXPORT
 lcm_t *lcm_create(const char *provider);
 
+/*
+ * Security Parameters for LCM
+ */
+typedef struct {
+    /* 
+     * string describing the Cryptographic algorithm and mode of operation used 
+     * Possible options are:
+         "AES-128/GCM"
+     */
+    const char* algorithm;
+
+    /*
+     * symmetric encryption key
+     * hex encoded null terminated string, must be the appropriate length for the symmetric algorithm (i.e. a 16 byte key for AES-128)
+     */
+    const char* key;
+
+    /* 
+     * Session nonce
+     * hex encoded null terminated string
+     *      must be 6 bytes
+     */
+    const char* nonce;
+    
+    /*
+     * sender ID unique to the channel within the multicastgroup
+     */
+    uint16_t sender_id;
+} lcm_security_parameters;
+
+/*
+ * Like lcm_create, but initializing security functionalities
+ * If lcm_t is created with this function, subsequent publish and subscribe operations will be secured
+ * FIXME: mention document that explains details
+ */
+LCM_EXPORT
+lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters* sec_params);
+
 /**
  * @brief Destructor
  */

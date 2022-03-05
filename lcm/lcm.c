@@ -11,6 +11,8 @@
 #include "lcm.h"
 #include "lcm_internal.h"
 
+#include "crypto_wrapper.h"
+
 #ifdef WIN32
 #include <winsock2.h>
 #include "windows/WinPorting.h"
@@ -55,8 +57,10 @@ extern void lcm_tcpq_provider_init(GPtrArray *providers);
 extern void lcm_mpudpm_provider_init(GPtrArray *providers);
 extern void lcm_memq_provider_init(GPtrArray *providers);
 
-lcm_t *lcm_create(const char *url)
-{
+
+lcm_t* lcm_create_impl(const char* url, 
+                lcm_security_parameters *sec_params //nullable if security is not desired
+                ) {
 #ifdef WIN32
     WSADATA wsd;
     int status = WSAStartup(MAKEWORD(2, 0), &wsd);
@@ -119,7 +123,7 @@ lcm_t *lcm_create(const char *url)
     g_static_rec_mutex_init(&lcm->mutex);
     g_static_rec_mutex_init(&lcm->handle_mutex);
 
-    lcm->provider = info->vtable->create(lcm, network, args);
+    lcm->provider = info->vtable->create(lcm, network, args, sec_params);
     lcm->in_handle = 0;
 
     free(provider_str);
@@ -133,7 +137,6 @@ lcm_t *lcm_create(const char *url)
     }
 
     lcm->default_max_num_queued_messages = 30;
-
     return lcm;
 
 fail:
@@ -146,6 +149,17 @@ fail:
     //    if (lcm)
     //        lcm_destroy (lcm);
     return NULL;
+}
+
+lcm_t *lcm_create(const char *url)
+{
+    return lcm_create_impl(url, NULL);
+}
+
+lcm_t *lcm_create_with_security(const char *url, lcm_security_parameters* sec_params) {
+    if(!sec_params)
+        fprintf(stderr, "lcm_create security called with sec_params=NULL\n"); //we shouldnt allow to call this function with a nullptr accidentally; caller should call lcm_create if security is not desired
+    return lcm_create_impl(url, sec_params);
 }
 
 // free the array that we associate for each channel, and the key. Don't free
@@ -188,6 +202,7 @@ void lcm_destroy(lcm_t *lcm)
 
     g_static_rec_mutex_free(&lcm->handle_mutex);
     g_static_rec_mutex_free(&lcm->mutex);
+
     free(lcm);
 #ifdef WIN32
     WSACleanup();

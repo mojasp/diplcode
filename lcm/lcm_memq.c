@@ -72,8 +72,12 @@ static int64_t timestamp_now(void)
     return (int64_t) tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-static lcm_provider_t *lcm_memq_create(lcm_t *parent, const char *target, const GHashTable *args)
+static lcm_provider_t *lcm_memq_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params)
 {
+    if(sec_params) {
+        fprintf(stderr, "Security is not supported for LCM memq Provider, Exiting...");
+        return NULL;
+    }
     lcm_memq_t *self = (lcm_memq_t *) calloc(1, sizeof(lcm_memq_t));
     self->lcm = parent;
     self->queue = g_queue_new();

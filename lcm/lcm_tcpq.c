@@ -185,11 +185,15 @@ fail:
     return -1;
 }
 
-static lcm_provider_t *lcm_tcpq_create(lcm_t *parent, const char *network, const GHashTable *args)
+static lcm_provider_t *lcm_tcpq_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params)
 {
 #ifndef WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif
+    if(sec_params) {
+        fprintf(stderr, "Security is not supported for LCM tcpq Provider, Exiting...");
+        return NULL;
+    }
 
     lcm_tcpq_t *self = (lcm_tcpq_t *) calloc(1, sizeof(lcm_tcpq_t));
     self->lcm = parent;

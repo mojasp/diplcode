@@ -112,6 +112,8 @@ struct _lcm_provider_t {
     int32_t udp_last_report_secs;
 
     uint32_t msg_seqno;  // rolling counter of how many messages transmitted
+    
+    lcm_security_ctx* security_ctx;
 };
 
 static int _setup_recv_parts(lcm_udpm_t *lcm);
@@ -179,6 +181,8 @@ void lcm_udpm_destroy(lcm_udpm_t *lcm)
         g_mutex_free(lcm->create_read_thread_mutex);
         g_cond_free(lcm->create_read_thread_cond);
     }
+    if(lcm->security_ctx)
+        destroy_security_ctx(lcm->security_ctx);
     free(lcm);
 }
 
@@ -343,9 +347,6 @@ static int _recv_message_fragment(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
         lcmb->data_size = fbuf->data_size;
         lcmb->recv_utime = fbuf->last_packet_utime;
 
-        //decrypt
-        printf("decrypt fragmented: Unimplemented\n"); //FIXME
-
         // don't need the fragment buffer anymore
         lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
 
@@ -360,9 +361,9 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
 
     uint32_t seqno = ntohl(hdr2->msg_seqno);
-    uint64_t salt = hdr2->salt;
+    uint16_t sender_id = ntohs(hdr2->sender_id);
 
-    printf("salt %lu, seqno %u\n", salt, seqno);
+    printf("sender_id %u, seqno %u\n", sender_id, seqno);
     // shouldn't have to worry about buffer overflow here because we
     // zeroed out byte #65536, which is never written to by recv
     const char *pkt_channel_str = (char *) (hdr2 + 1);
@@ -385,10 +386,7 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
     memset(rptext_buf, 0, lcmb->data_size);
 
-    IV iv;
-    create_IV(&iv, salt, seqno);
-
-    int auth_result = decrypt(ctext, lcmb->data_size, &iv, rptext_buf, lcmb->data_size);
+    int auth_result = decrypt(lcm->security_ctx, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
     if(auth_result == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
         printf("Could not authenticate packet, dropping...\n");
@@ -620,17 +618,23 @@ static int lcm_udpm_subscribe(lcm_udpm_t *lcm, const char *channel)
 static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
                             unsigned int datalen)
 {
-    printf("encrypt msg; datalen %u, channel %s, seqno %u\n", datalen, channel, lcm->msg_seqno);
-    printf("salt %lu, seqno %u\n", get_salt(), lcm->msg_seqno);
 
+
+    //FIXME: clean this up a bit
+    if(lcm->security_ctx) {
+        printf("encrypt msg; datalen %u, channel %s, seqno %u\n", datalen, channel, lcm->msg_seqno);
+    }
+    else {
+        //FIXME: this should be possible; also very important that the udp self-test doest not encrypt (at least not with the same nonce)
+        fprintf(stderr, "not supporting unsecured lcm udp for now, dropping message...\n");
+        return -1;
+    }
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
 
-    IV iv;
-    create_IV(&iv, get_salt(), lcm->msg_seqno);
-
     char* ctext = malloc(ctextsize); //FIXME: malloc from ringbuffer
-    if(encrypt((char*) data, datalen, &iv, ctext, ctextsize)) {
+    if(encrypt(lcm->security_ctx, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
         fprintf(stderr, "encryption failed!\n");
+        return -1;
     }
 
     int channel_size = strlen(channel);
@@ -648,7 +652,7 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
         lcm2_header_short_t hdr;
         hdr.magic = htonl(LCM2_MAGIC_SHORT);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
-        hdr.salt = get_salt();
+        hdr.sender_id =  0; //htons(sender_id); FIXME at 
 
         struct iovec sendbufs[3];
         sendbufs[0].iov_base = (char *) &hdr;
@@ -682,6 +686,9 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
         else
             return status;
     } else {
+        if(lcm->security_ctx) {
+            fprintf(stderr, "Security for fragmented messages not supported right now");
+        }
         // message is large.  fragment into multiple packets
 
         int fragment_size = LCM_FRAGMENT_MAX_PAYLOAD;
@@ -1098,8 +1105,9 @@ setup_recv_thread_fail:
     return -1;
 }
 
-lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashTable *args)
+lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params)
 {
+
     udpm_params_t params;
     memset(&params, 0, sizeof(udpm_params_t));
 
@@ -1110,6 +1118,14 @@ lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashT
     }
 
     lcm_udpm_t *lcm = (lcm_udpm_t *) calloc(1, sizeof(lcm_udpm_t));
+
+
+    if(!sec_params) 
+        fprintf(stderr, "Warning: initializing LCM UDPM Provider without security!\n");
+    else {
+        fprintf(stderr, "Initializing LCM UDPM Provider with security enabled\n");
+        lcm->security_ctx = create_security_ctx(sec_params);
+    }
 
     lcm->lcm = parent;
     lcm->params = params;

@@ -33,7 +33,7 @@ struct _lcm_provider_info_t {
 };
 
 struct _lcm_provider_vtable_t {
-    lcm_provider_t *(*create)(lcm_t *, const char *target, const GHashTable *args);
+    lcm_provider_t *(*create)(lcm_t *, const char *target, const GHashTable *args, lcm_security_parameters *sec_params);
     void (*destroy)(lcm_provider_t *);
     int (*subscribe)(lcm_provider_t *, const char *channel);
     int (*unsubscribe)(lcm_provider_t *, const char *channel);

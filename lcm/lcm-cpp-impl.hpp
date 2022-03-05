@@ -4,8 +4,6 @@
 #error "Don't include this file"
 #endif
 
-#include "crypto_wrapper.h"
-
 // =============== implementation ===============
 
 int Subscription::setQueueCapacity(int num_messages)
@@ -126,9 +124,12 @@ class LCMLambdaSubscription : public Subscription {
 };
 #endif
 
-inline LCM::LCM(std::string lcm_url) : owns_lcm(true)
+inline LCM::LCM(std::string lcm_url, lcm_security_parameters* sec_params) : owns_lcm(true)
 {
-    this->lcm = lcm_create(lcm_url.c_str());
+    if(sec_params)
+        this->lcm = lcm_create_with_security(lcm_url.c_str(), sec_params);
+    else
+        this->lcm = lcm_create(lcm_url.c_str());
 }
 
 inline LCM::LCM(lcm_t *lcm_in) : owns_lcm(false)
@@ -164,7 +165,7 @@ template <class MessageType>
 inline int LCM::publish(const std::string &channel, const MessageType *msg)
 {
     unsigned int datalen = msg->getEncodedSize();
-    uint8_t *buf = new uint8_t[datalen + LCMCRYPTO_TAGSIZE];
+    uint8_t *buf = new uint8_t[datalen];
     msg->encode(buf, 0, datalen);
     int status = this->publish(channel, buf, datalen);
     delete[] buf;

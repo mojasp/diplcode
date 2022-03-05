@@ -161,10 +161,15 @@ static int load_next_event(lcm_logprov_t *lr)
     return 0;
 }
 
-static lcm_provider_t *lcm_logprov_create(lcm_t *parent, const char *target, const GHashTable *args)
+static lcm_provider_t *lcm_logprov_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params)
 {
     if (!target || !strlen(target)) {
         fprintf(stderr, "Error: Missing filename\n");
+        return NULL;
+    }
+
+    if(sec_params) {
+        fprintf(stderr, "Security is not supported for LCM logprovider, Exiting...");
         return NULL;
     }
 

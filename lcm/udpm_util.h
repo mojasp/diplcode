@@ -70,7 +70,7 @@ typedef int SOCKET;
 typedef struct _lcm2_header_short {
     uint32_t magic;
     uint32_t msg_seqno;
-    uint64_t salt;
+    uint16_t sender_id;
 } lcm2_header_short_t;
 
 typedef struct _lcm2_header_long {

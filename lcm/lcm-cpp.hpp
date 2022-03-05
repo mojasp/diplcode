@@ -50,7 +50,7 @@ class LCM {
      *
      * @sa lcm_create()
      */
-    inline LCM(std::string lcm_url = "");
+    inline LCM(std::string lcm_url = "", lcm_security_parameters *sec_params = nullptr);
 
     /**
      * @brief Constructor.
