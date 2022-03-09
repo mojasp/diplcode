@@ -59,7 +59,8 @@ extern void lcm_memq_provider_init(GPtrArray *providers);
 
 
 lcm_t* lcm_create_impl(const char* url, 
-                lcm_security_parameters *sec_params //nullable if security is not desired
+                lcm_security_parameters *sec_params, //nullable if security is not desired
+                size_t param_len
                 ) {
 #ifdef WIN32
     WSADATA wsd;
@@ -123,7 +124,7 @@ lcm_t* lcm_create_impl(const char* url,
     g_static_rec_mutex_init(&lcm->mutex);
     g_static_rec_mutex_init(&lcm->handle_mutex);
 
-    lcm->provider = info->vtable->create(lcm, network, args, sec_params);
+    lcm->provider = info->vtable->create(lcm, network, args, sec_params, param_len);
     lcm->in_handle = 0;
 
     free(provider_str);
@@ -153,13 +154,13 @@ fail:
 
 lcm_t *lcm_create(const char *url)
 {
-    return lcm_create_impl(url, NULL);
+    return lcm_create_impl(url, NULL, 0);
 }
 
-lcm_t *lcm_create_with_security(const char *url, lcm_security_parameters* sec_params) {
+lcm_t *lcm_create_with_security(const char *url, lcm_security_parameters* sec_params, size_t param_len) {
     if(!sec_params)
         fprintf(stderr, "lcm_create security called with sec_params=NULL\n"); //we shouldnt allow to call this function with a nullptr accidentally; caller should call lcm_create if security is not desired
-    return lcm_create_impl(url, sec_params);
+    return lcm_create_impl(url, sec_params, param_len);
 }
 
 // free the array that we associate for each channel, and the key. Don't free

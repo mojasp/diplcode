@@ -72,7 +72,7 @@ static int64_t timestamp_now(void)
     return (int64_t) tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-static lcm_provider_t *lcm_memq_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params)
+static lcm_provider_t *lcm_memq_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
 {
     if(sec_params) {
         fprintf(stderr, "Security is not supported for LCM memq Provider, Exiting...");

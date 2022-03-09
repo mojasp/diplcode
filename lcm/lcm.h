@@ -202,6 +202,11 @@ typedef struct {
     const char* algorithm;
 
     /*
+     * channelname that the security parameters are associated with
+     * If NULL, associated them with the group / lcm provider
+     */
+    const char* channelname; 
+    /*
      * symmetric encryption key
      * hex encoded null terminated string, must be the appropriate length for the symmetric algorithm (i.e. a 16 byte key for AES-128)
      */
@@ -223,10 +228,13 @@ typedef struct {
 /*
  * Like lcm_create, but initializing security functionalities
  * If lcm_t is created with this function, subsequent publish and subscribe operations will be secured
+ * 
+ * sec_params shall be an array of length param_len containing the security parameters for the group and each channel that will be used
+ *
  * FIXME: mention document that explains details
  */
 LCM_EXPORT
-lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters* sec_params);
+lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters* sec_params, size_t param_len);
 
 /**
  * @brief Destructor

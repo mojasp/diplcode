@@ -161,7 +161,7 @@ static int load_next_event(lcm_logprov_t *lr)
     return 0;
 }
 
-static lcm_provider_t *lcm_logprov_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params)
+static lcm_provider_t *lcm_logprov_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
 {
     if (!target || !strlen(target)) {
         fprintf(stderr, "Error: Missing filename\n");

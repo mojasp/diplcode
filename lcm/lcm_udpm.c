@@ -182,7 +182,7 @@ void lcm_udpm_destroy(lcm_udpm_t *lcm)
         g_cond_free(lcm->create_read_thread_cond);
     }
     if(lcm->security_ctx)
-        destroy_security_ctx(lcm->security_ctx);
+        lcm_destroy_security_ctx(lcm->security_ctx);
     free(lcm);
 }
 
@@ -391,7 +391,14 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
     memset(rptext_buf, 0, lcmb->data_size);
 
-    int auth_result = decrypt(lcm->security_ctx, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
+    //FIXME use group decryption for self test for now, change this somehow
+    int auth_result;
+    if(strncmp(pkt_channel_str, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0)
+        auth_result = lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
+    else {
+
+        auth_result = lcm_decrypt_message(lcm->security_ctx, pkt_channel_str, sender_id, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
+    }
     if(auth_result == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
         CRYPTO_DBG("%s", "Could not authenticate packet, dropping...\n");
@@ -616,14 +623,24 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
                             unsigned int datalen)
 {
     if(!lcm->security_ctx) {
-        //FIXME: this should be possible; also very important that the udp self-test doest not encrypt (at least not with the same nonce)
-        CRYPTO_DBG("%s\n", "not supporting unsecured lcm udp for now, dropping message...");
+        //FIXME: this should be allowed, but maybe signal that we don't want to encrypt in another way
+        fprintf(stderr, "%s\n", "not supporting unsecured lcm udp for now, dropping message...");
         return -1;
     }
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
 
-    char* ctext = malloc(ctextsize); //FIXME: malloc from ringbuffer
-    if(encrypt(lcm->security_ctx, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
+    char* ctext = malloc(ctextsize); //FIXME: use malloc from ringbuffer, free this at some point
+    
+    //FIXME: the self test might cause a nonce-reuse issue, deal with this somehow
+    //FIXME use group encryption for self test for now, change this somehow
+    int is_self_test = strncmp(channel, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0;
+    if(is_self_test) {
+        if(lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
+            CRYPTO_DBG("%s\n", "encryption failed!");
+            return -1;
+        }
+    }
+    else if (lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
         CRYPTO_DBG("%s\n", "encryption failed!");
         return -1;
     }
@@ -633,17 +650,18 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
         fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
         return -1;
     }
+//    char* channel_ctext = malloc(strnlen(channel, LCM_MAX_CHANNEL_NAME_LENGTH)); FIXME: channel name encryption
 
     int payload_size = channel_size + 1 + ctextsize;
     if (payload_size <= LCM_SHORT_MESSAGE_MAX_SIZE) {
         // message is short.  send in a single packet
 
-        g_static_mutex_lock(&lcm->transmit_lock);
+        g_static_mutex_lock(&lcm->transmit_lock); //FIXME: lcm_crypto should probably use this lock as well, or synchronize in a different way
 
         lcm2_header_short_t hdr;
         hdr.magic = htonl(LCM2_MAGIC_SHORT);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
-        hdr.sender_id =  0; //htons(sender_id); FIXME at 
+        hdr.sender_id = is_self_test ? 0: htons(lcm_get_sender_id(lcm->security_ctx, channel)); 
 
         struct iovec sendbufs[3];
         sendbufs[0].iov_base = (char *) &hdr;
@@ -1096,7 +1114,7 @@ setup_recv_thread_fail:
     return -1;
 }
 
-lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params)
+lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
 {
 
     udpm_params_t params;
@@ -1115,7 +1133,7 @@ lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashT
         fprintf(stderr, "Warning: initializing LCM UDPM Provider without security!\n");
     else {
         fprintf(stderr, "Initializing LCM UDPM Provider with security enabled\n");
-        lcm->security_ctx = create_security_ctx(sec_params);
+        lcm->security_ctx = lcm_create_security_ctx(sec_params, param_len);
     }
 
     lcm->lcm = parent;

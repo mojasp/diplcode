@@ -16,6 +16,7 @@
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <list>
 
 #include <unistd.h>
 
@@ -57,9 +58,9 @@ void send_on_channel(std::string channel, lcm::LCM& lcm);
 static Handler handlerObject(true);
 static std::string instance_name;
 std::vector<std::function<void(void)>> sendfunctions;
+std::vector<std::chrono::high_resolution_clock::time_point> last_send;
 
-void send_on_channel(std::string channel, lcm::LCM& lcm) {
-    static auto last_send = std::chrono::high_resolution_clock::now() - std::chrono::minutes(1); //initialize to the past so we sent initially
+void send_on_channel(std::string channel, lcm::LCM& lcm, std::chrono::high_resolution_clock::time_point &last_send) {
 
     if(std::chrono::high_resolution_clock::now() - last_send >= sender_delay) {
         exlcm::example_t my_data;
@@ -92,15 +93,19 @@ void setup_channel(toml::table& channel_config, lcm::LCM& lcm) {
     auto send = channel_config["send"].value<bool>().value();
     auto recv = channel_config["receive"].value<bool>().value();
     //FIXME: configure channel key and nonce once that functionality is implemented in the lcm backend
+
     if(recv) {
         std::cout << instance_name << ": subscribing to channel " << channelname << "\n";
         lcm.subscribe(channelname, &Handler::handleMessage, &handlerObject);
     }
 
     if(send) {
+        std::cout << instance_name << ": starting to send on channel " << channelname << "\n";
+        last_send.push_back(std::chrono::high_resolution_clock::now() - std::chrono::minutes(1)); //initialize to the past so we sent initially
+        auto last_send_idx = last_send.size() -1;
         sendfunctions.push_back(
             [=, &lcm](){
-                send_on_channel(channelname, lcm);
+                send_on_channel(channelname, lcm, last_send[last_send_idx]);
             }
         );
     }
@@ -143,23 +148,54 @@ int main(int argc, char **argv)
         auto &group1 = *(*groups)[group1key].as_table();
 
         auto multicast_url = group1["multicast_url"];
-        //init security parameters
 
-        lcm_security_parameters sec_params;
+        //init security parameters
+        std::vector<lcm_security_parameters> sec_params;
 
         std::string algorithm = group1["algorithm"].value<std::string>().value();
         std::string key       = group1["group_key"].value<std::string>().value();
         std::string nonce     = group1["group_nonce"].value<std::string>().value();
 
-        sec_params.algorithm = algorithm.c_str();
-        sec_params.key       = key.c_str();
-        sec_params.nonce     = nonce.c_str();
-        sec_params.sender_id = 0;
+        lcm_security_parameters group_params;
+        group_params.channelname = nullptr;
+        group_params.algorithm = algorithm.c_str();
+        group_params.key       = key.c_str();
+        group_params.nonce     = nonce.c_str();
+        group_params.sender_id = 0;
+        sec_params.push_back(group_params);
 
-        lcm::LCM lcm(multicast_url.value<std::string>().value(), &sec_params);
+        std::list<std::string> storage; //storage for config strings until we call lcm::LCM
+        for (auto & entry : group1) {
+            if(entry.second.is_table()) {
+                //these are the channels
+                auto& channel_config = *entry.second.as_table();
+                lcm_security_parameters channel_param;
+
+                storage.push_back(channel_config["channelname"].value<std::string>().value());
+                channel_param.channelname = storage.back().c_str();
+
+
+                storage.push_back(channel_config["channel_key"].value<std::string>().value());
+                channel_param.key = storage.back().c_str();
+
+                storage.push_back(channel_config["channel_nonce"].value<std::string>().value());
+                channel_param.nonce = storage.back().c_str();
+
+                channel_param.algorithm = algorithm.c_str();
+                channel_param.sender_id    = channel_config["sender_id"].value<int>().value();
+                sec_params.push_back(channel_param);
+            }
+        }
+
+        lcm::LCM lcm(multicast_url.value<std::string>().value(), sec_params.data(), sec_params.size());
         if (!lcm.good())
             return 1;
 
+        for (auto elem: storage) {
+            memset(elem.data(), 0, elem.length()); 
+        }
+
+        //setup subscriptions
         for (auto & entry : group1) {
             if(entry.second.is_table()) {
                 //these are the channels
@@ -172,6 +208,7 @@ int main(int argc, char **argv)
         while (true) {
             for (auto& f : sendfunctions) {
                 f();
+
             }
             if(lcm.handleTimeout(100) < 0) {
                 std::cerr << "lcm internal error, exiting...\n";

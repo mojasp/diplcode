@@ -124,10 +124,10 @@ class LCMLambdaSubscription : public Subscription {
 };
 #endif
 
-inline LCM::LCM(std::string lcm_url, lcm_security_parameters* sec_params) : owns_lcm(true)
+inline LCM::LCM(std::string lcm_url, lcm_security_parameters* sec_params, size_t param_len) : owns_lcm(true)
 {
     if(sec_params)
-        this->lcm = lcm_create_with_security(lcm_url.c_str(), sec_params);
+        this->lcm = lcm_create_with_security(lcm_url.c_str(), sec_params, param_len);
     else
         this->lcm = lcm_create(lcm_url.c_str());
 }

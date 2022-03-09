@@ -1,6 +1,7 @@
 #include "crypto_wrapper.h"
 #include <udpm_util.h>
 #include <assert.h>
+#include <map>
 
 #include <iostream>
 using std::cout;
@@ -14,12 +15,13 @@ using std::endl;
 #include <botan/hex.h>
 #include <botan/base64.h>
 #include <botan/cipher_mode.h>
+#include <botan/aead.h>
 
 /*
- * this should indeed be a cpp struct as opposed to a C struct since botan expects various c++ Datatypes for encryption. 
- * having this in c++ therefore saves some copies & maybe allocations
+ * this should indeed be a cpp class as opposed to a C struct since botan expects various c++ Datatypes for encryption. 
+ * having this in c++ therefore saves some copies & maybe allocations by avoiding construction of said datatypes
  */
-class _lcm_security_ctx {
+class crypto_ctx {
     public:
         std::string algorithm;
 
@@ -28,16 +30,14 @@ class _lcm_security_ctx {
         std::vector<uint8_t> key;
         const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
 
-        _lcm_security_ctx (lcm_security_parameters* params) :
-            algorithm(params->algorithm),
-            sender_id(params->sender_id)
-        {
-            salt = Botan::hex_decode(params->nonce);
-            key = Botan::hex_decode(params->key);
-        }
+        crypto_ctx (lcm_security_parameters* params) :
+            algorithm (params->algorithm),
+            sender_id (params->sender_id),
+            salt (Botan::hex_decode(params->nonce)),
+            key (Botan::hex_decode(params->key)) {}
 
 
-        Botan::secure_vector<uint8_t> create_IV( const uint32_t seqno) {
+        Botan::secure_vector<uint8_t> get_decryption_IV( const uint32_t seqno, uint16_t sender_id) {
             Botan::secure_vector<uint8_t> result;
 
             result.resize(LCMCRYPTO_IVSIZE);
@@ -50,46 +50,181 @@ class _lcm_security_ctx {
             memcpy(data + 2 + salt.size(), &seqno, 4);
             return result; //RVO should elide copy
         }
+        Botan::secure_vector<uint8_t> get_encryption_IV( const uint32_t seqno) {
+            return get_decryption_IV(seqno, this->sender_id);
+        }
 };
 
-extern "C" lcm_security_ctx* create_security_ctx (lcm_security_parameters *params){
-    return new lcm_security_ctx(params);
+class _lcm_security_ctx {
+    public:
+        std::unique_ptr<crypto_ctx> group_ctx;
+
+    private:
+    //Use map with std::string as keys for storage; but comparefn with char* so we avoid additional allocation during lookup
+    struct str_cmp {
+        bool operator()(const char* a, const char* b) const {
+            return std::strcmp(a, b) < 0;
+        }
+    };
+
+    std::map<char*, std::unique_ptr<crypto_ctx>, str_cmp> channel_ctx_map;
+
+    public:
+    _lcm_security_ctx(lcm_security_parameters* params, size_t param_len) {
+        for (int i = 0; i < param_len; i++) {
+            if(params[i].channelname == nullptr) {
+                group_ctx = std::make_unique<crypto_ctx>(params + i);
+            }
+            else {
+                channel_ctx_map[strndup(params[i].channelname, LCM_MAX_CHANNEL_NAME_LENGTH)] = std::make_unique<crypto_ctx>(params+i);
+            }
+        }
+    }
+    ~_lcm_security_ctx() {
+        for (auto it = channel_ctx_map.begin(); it != channel_ctx_map.end(); it++) {
+            char* name = it->first;
+            channel_ctx_map.erase(it);
+            free(name);
+        }
+    }
+
+    crypto_ctx* get_crypto_ctx(const char* channelname) {
+        auto it =  channel_ctx_map.find((char*) channelname);
+        if(it==channel_ctx_map.end())
+            return nullptr;
+        return it->second.get();
+    }
+};
+
+extern "C" lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters *params, size_t param_len){
+    return new _lcm_security_ctx(params, param_len);
 }
-extern "C" void destroy_security_ctx (lcm_security_ctx* ctx){delete ctx;}
 
-extern "C" int encrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ptext, size_t ptextsize, char * ctext, size_t ctextsize) {
-    auto enc = Botan::Cipher_Mode::create("AES-128/GCM", Botan::ENCRYPTION);
+extern "C" void lcm_destroy_security_ctx (lcm_security_ctx* ctx){delete ctx;}
 
-    enc->set_key(ctx->key);
+extern "C" int lcm_encrypt_message(lcm_security_ctx* ctx, const char* channelname, uint32_t seqno, char* ptext, size_t ptextsize, char* ctext, size_t ctextsize) {
+    auto crypto_ctx = ctx->get_crypto_ctx(channelname);
 
-    auto IV = ctx->create_IV(seqno);
+    if(!crypto_ctx) {
+        fprintf(stderr, "Cannot encrypt message: no security context registered for channel %s\n", channelname);
+        return LCMCRYPTO_ENCRYPTION_ERROR;
+    }
+
+
+    auto enc = Botan::AEAD_Mode::create_or_throw("AES-128/GCM", Botan::ENCRYPTION);
+
+    enc->set_key(crypto_ctx->key);
+    enc->set_associated_data((const uint8_t*) channelname, strlen(channelname));
+
+    auto IV = crypto_ctx->get_encryption_IV(seqno);
     enc->start(IV);
     Botan::secure_vector<uint8_t> ct(ptext, ptext + ptextsize);
     enc->finish(ct);
-    printf("tagsize %li\n", enc->tag_size());
     assert(enc->tag_size() == LCMCRYPTO_TAGSIZE);
     //FIXME: stupid implementation for now, take advantage of in-place encryption later
+
+    if(ctextsize < ct.size()) {
+        fprintf(stderr, "ctext buffer too small\n");
+        return LCMCRYPTO_ENCRYPTION_ERROR;
+    }
+
     memcpy(ctext, ct.data(), ct.size());
 
     CRYPTO_DBG("encrypted msg using %s with IV %s\n", enc->name().c_str(), Botan::hex_encode(IV).c_str());
     return 0;
 }
-extern "C" int decrypt(lcm_security_ctx* ctx, uint32_t seqno, char * ctext, size_t ctextsize, char * ptext, size_t ptextsize) {
-    auto dec = Botan::Cipher_Mode::create("AES-128/GCM", Botan::DECRYPTION);
-    dec->set_key(ctx->key);
 
+extern "C" int lcm_decrypt_message(lcm_security_ctx* ctx, const char* channelname, uint16_t sender_id, uint32_t seqno, char* ctext, size_t ctextsize, char* ptext, size_t ptextsize){
+    auto crypto_ctx = ctx->get_crypto_ctx(channelname);
+    if(!crypto_ctx) {
+        fprintf(stderr, "Cannot decrypt message: no security context registered for channel %s", channelname);
+        return LCMCRYPTO_DECRYPTION_ERROR;
+    }
+
+    auto dec = Botan::AEAD_Mode::create_or_throw("AES-128/GCM", Botan::DECRYPTION);
+    dec->set_key(crypto_ctx->key);
+    dec->set_associated_data((const uint8_t*) channelname, strlen(channelname));
+
+    auto IV = crypto_ctx->get_decryption_IV(seqno, sender_id);
     try {
-        dec->start(ctx->create_IV(seqno));
+        dec->start(IV);
         Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
         dec->finish(pt);
         //FIXME: stupid implementation for now, take advantage of in-place encryption later
+        //FIXME: use AEAD in some cases
+
+        if(ptextsize < pt.size()) {
+            fprintf(stderr, "ptext buffer too small\n");
+            return LCMCRYPTO_DECRYPTION_ERROR;
+        }
+
         memcpy(ptext, pt.data(), pt.size());
 
-        CRYPTO_DBG("decrypted and authenticated msg using %s\n", dec->name().c_str());
+        CRYPTO_DBG("decrypted and authenticated msg using %s and IV = %s\n", dec->name().c_str(), Botan::hex_encode(IV).c_str());
     }
     catch(const Botan::Invalid_Authentication_Tag& err) {
-        CRYPTO_DBG("%s\n", "got msg with invalid auth tag");
+        CRYPTO_DBG("%s, IV was %s\n", "got msg with invalid auth tag", Botan::hex_encode(IV).c_str());
         return LCMCRYPTO_INVALID_AUTH_TAG;
     }
     return 0;
+}
+
+extern "C" int lcm_encrypt_channelname(lcm_security_ctx* ctx, uint32_t seqno, char* ptext, size_t ptextsize, char* ctext, size_t ctextsize) {
+    auto crypto_ctx = ctx->group_ctx.get();
+
+    auto enc = Botan::Cipher_Mode::create("AES-128/GCM", Botan::ENCRYPTION);
+
+    enc->set_key(crypto_ctx->key);
+
+    auto IV = crypto_ctx->get_encryption_IV(seqno);
+    enc->start(IV);
+    Botan::secure_vector<uint8_t> ct(ptext, ptext + ptextsize);
+    enc->finish(ct);
+    assert(enc->tag_size() == LCMCRYPTO_TAGSIZE);
+    //FIXME: stupid implementation for now, take advantage of in-place encryption later
+
+    if(ctextsize < ct.size()) {
+        fprintf(stderr, "ctext buffer too small\n");
+        return LCMCRYPTO_ENCRYPTION_ERROR;
+    }
+
+    memcpy(ctext, ct.data(), ct.size());
+
+    CRYPTO_DBG("encrypted msg using %s with IV %s\n", enc->name().c_str(), Botan::hex_encode(IV).c_str());
+    return 0;
+}
+
+extern "C" int lcm_decrypt_channelname(lcm_security_ctx* ctx, uint16_t sender_id, uint32_t seqno, char* ctext, size_t ctextsize, char* ptext, size_t ptextsize) {
+    auto crypto_ctx = ctx->group_ctx.get();
+
+    auto dec = Botan::Cipher_Mode::create("AES-128/GCM", Botan::DECRYPTION);
+    dec->set_key(crypto_ctx->key);
+
+    auto IV = crypto_ctx->get_decryption_IV(seqno, sender_id);
+    try {
+        dec->start(IV);
+        Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
+        dec->finish(pt);
+        //FIXME: stupid implementation for now, take advantage of in-place encryption later
+        //FIXME: use AEAD in some cases
+
+        if(ptextsize < pt.size()) {
+            fprintf(stderr, "ptext buffer too small\n");
+            return LCMCRYPTO_DECRYPTION_ERROR;
+        }
+
+        memcpy(ptext, pt.data(), pt.size());
+
+        CRYPTO_DBG("decrypted and authenticated msg using %s and IV = %s\n", dec->name().c_str(), Botan::hex_encode(IV).c_str());
+    }
+    catch(const Botan::Invalid_Authentication_Tag& err) {
+        CRYPTO_DBG("%s, IV was %s\n", "got msg with invalid auth tag", Botan::hex_encode(IV).c_str());
+        return LCMCRYPTO_INVALID_AUTH_TAG;
+    }
+    return 0;
+}
+
+extern "C" uint16_t lcm_get_sender_id(lcm_security_ctx* ctx, const char* channelname) {
+    assert(ctx->get_crypto_ctx(channelname));
+    return ctx->get_crypto_ctx(channelname)->sender_id;
 }
