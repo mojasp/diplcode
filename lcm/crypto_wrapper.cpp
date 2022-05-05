@@ -38,16 +38,18 @@ class crypto_ctx {
 
 
         Botan::secure_vector<uint8_t> get_decryption_IV( const uint32_t seqno, uint16_t sender_id) {
+            //IV shall be (sequid | sender_id | fixed/salt )
             Botan::secure_vector<uint8_t> result;
 
-            result.resize(LCMCRYPTO_IVSIZE);
             assert(LCMCRYPTO_IVSIZE==12); //nessecary for hardcoded values in this function here
+            result.resize(LCMCRYPTO_IVSIZE);
             assert(salt.size() == LCMCRYPTO_SESSION_NONCE_SIZE);
 
             auto data = &result[0];
-            memcpy(data, &sender_id, 2);
-            memcpy(data+2, &salt[0], salt.size());
-            memcpy(data + 2 + salt.size(), &seqno, 4);
+            memcpy(data, &seqno, 4);
+            memcpy(data + 4, &sender_id, 2);
+            memcpy(data + 6, &salt[0], 6);
+
             return result; //RVO should elide copy
         }
         Botan::secure_vector<uint8_t> get_encryption_IV( const uint32_t seqno) {
@@ -190,7 +192,7 @@ extern "C" int lcm_encrypt_channelname(lcm_security_ctx* ctx, uint32_t seqno, ch
 
     memcpy(ctext, ct.data(), ct.size());
 
-    CRYPTO_DBG("encrypted msg using %s with IV %s\n", enc->name().c_str(), Botan::hex_encode(IV).c_str());
+    CRYPTO_DBG("encrypted channelname using %s with IV %s\n", enc->name().c_str(), Botan::hex_encode(IV).c_str());
     return 0;
 }
 

@@ -23,7 +23,7 @@ extern "C" {
 #define LCMCRYPTO_DEBUG 1
 
 #define CRYPTO_DBG(fmt, ...) \
-    do { if (LCMCRYPTO_DEBUG) fprintf(stderr, "lcmcrypto: " fmt, __VA_ARGS__); } while (0)
+    do { if (LCMCRYPTO_DEBUG) fprintf(stderr, "lcmcrypto: " fmt, __VA_ARGS__); } while (0) //formatted debug message while preserving possible compilation errors
 
 typedef struct _lcm_security_ctx lcm_security_ctx; //opaque
 

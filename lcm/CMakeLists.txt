@@ -65,7 +65,6 @@ foreach(lcm_lib lcm lcm-static)
   target_link_libraries(${lcm_lib} PRIVATE
     GLib2::glib
     Botan2::Botan2
-    ${lcm_SOURCE_DIR}/lcm/cryptopp/libcryptopp.a
     ${CMAKE_THREAD_LIBS_INIT}
   )
 endforeach()
