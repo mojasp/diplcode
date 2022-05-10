@@ -25,7 +25,7 @@ extern "C" {
 #define CRYPTO_DBG(fmt, ...) \
     do { if (LCMCRYPTO_DEBUG) fprintf(stderr, "lcmcrypto: " fmt, __VA_ARGS__); } while (0) //formatted debug message while preserving possible compilation errors
 
-typedef struct _lcm_security_ctx lcm_security_ctx; //opaque
+typedef struct _lcm_security_ctx lcm_security_ctx; //opaque type used for interoperability with c code
 
 lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters* params, size_t paramlen);
 
@@ -38,7 +38,7 @@ int lcm_decrypt_channelname(lcm_security_ctx* ctx, uint16_t sender_id, uint32_t 
 int lcm_decrypt_message(lcm_security_ctx* ctx, const char* channelname, uint16_t sender_id, uint32_t seqno, char* ctext, size_t ctextsize, char* ptext, size_t ptextsize);
 
 
-uint16_t lcm_get_sender_id(lcm_security_ctx* ctx, const char* channelname);
+uint16_t get_sender_id_from_cryptoctx(lcm_security_ctx* ctx, const char* channelname);
 
 #ifdef __cplusplus
 }

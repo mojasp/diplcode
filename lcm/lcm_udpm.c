@@ -510,9 +510,10 @@ static int _recv_short_message_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int s
     lcmb->data_size = sz - lcmb->data_offset;
     return 1;
 }
+
 static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 {
-    lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
+    lcm2_header_short_secured_t *hdr2 = (lcm2_header_short_secured_t *) lcmb->buf;
 
     uint32_t seqno = ntohl(hdr2->msg_seqno);
     uint16_t sender_id = ntohs(hdr2->sender_id);
@@ -521,7 +522,7 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     // zeroed out byte #65536, which is never written to by recv
     const char *pkt_channel_str = (char *) (hdr2 + 1);
 
-    lcmb->channel_size = strlen(pkt_channel_str);
+    lcmb->channel_size = hdr2->channelname_length;
 
     if (lcmb->channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
         dbg(DBG_LCM, "bad channel name length\n");
@@ -534,21 +535,21 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
         return 0;
 
     int auth_result;
-    if(!(strncmp(pkt_channel_str, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0)) {
-        lcmb->data_offset = sizeof(lcm2_header_short_t) + lcmb->channel_size + 1;
 
-        lcmb->data_size = sz - lcmb->data_offset;
-        char* rptext_buf = lcmb->buf + lcmb->data_offset;
+    lcmb->data_offset = sizeof(lcm2_header_short_secured_t) + lcmb->channel_size + 1;
+
+    lcmb->data_size = sz - lcmb->data_offset;
+    char* rptext_buf = lcmb->buf + lcmb->data_offset;
 
 
-        CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
-        char* ctext = malloc(lcmb->data_size); //FIXME:use malloc from ringbuffer, memory leak as of now
-        memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
-        //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
-        memset(rptext_buf, 0, lcmb->data_size);
+    CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
+    char* ctext = malloc(lcmb->data_size); //FIXME:use malloc from ringbuffer, memory leak as of now
+    memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
+    //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
+    memset(rptext_buf, 0, lcmb->data_size);
 
-        auth_result = lcm_decrypt_message(lcm->security_ctx, pkt_channel_str, sender_id, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
-    }
+    auth_result = lcm_decrypt_message(lcm->security_ctx, pkt_channel_str, sender_id, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
+
     if(auth_result == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
         CRYPTO_DBG("%s", "Could not authenticate packet, dropping...\n");
@@ -693,7 +694,7 @@ static lcm_buf_t *udp_read_packet(lcm_udpm_t *lcm)
         if (!got_utime)
             lcmb->recv_utime = lcm_timestamp_now();
 
-        lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
+        lcm2_header_short_secured_t *hdr2 = (lcm2_header_short_secured_t *) lcmb->buf;
         uint32_t rcvd_magic = ntohl(hdr2->magic);
         if (rcvd_magic == LCM2_MAGIC_SHORT)
             got_complete_message = _recv_short_message_unsecured(lcm, lcmb, sz);
@@ -776,6 +777,7 @@ static int lcm_udpm_subscribe(lcm_udpm_t *lcm, const char *channel)
 static int lcm_udpm_publish_insecure(lcm_udpm_t *lcm, const char *channel, const void *data,
                             unsigned int datalen)
 {
+
     int channel_size = strlen(channel);
     if (channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
         fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
@@ -915,7 +917,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
 {
     if(!lcm->security_ctx) {
         //FIXME: signal that we don't want to encrypt in another way - explicit part of the interface instead of nullpointer - to avoid missconfiguration
-        fprintf(stderr, "%s\n", "no security context associated with lcm instance, exiting...");
+        fprintf(stderr, "%s\n", "no security context associated with lcm instance, exiting...\n");
         return -1;
     }
 
@@ -924,9 +926,14 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         CRYPTO_DBG("%s\n", "use unencrypted publish for self-test");
         return lcm_udpm_publish_insecure(lcm, channel, data, datalen);
     }
+    uint8_t channel_size = strnlen(channel, LCM_MAX_CHANNEL_NAME_LENGTH + 1);
+    if (channel_size == LCM_MAX_CHANNEL_NAME_LENGTH + 1) {
+        fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
+        return -1;
+    }
+//    char* channel_ctext = malloc(strnlen(channel, LCM_MAX_CHANNEL_NAME_LENGTH)); FIXME: channel name encryption
 
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
-
     char* ctext = malloc(ctextsize); //FIXME: use malloc from ringbuffer, free this at some point
     
     if (lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
@@ -935,23 +942,17 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         return -1;
     }
 
-    int channel_size = strlen(channel);
-    if (channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
-        fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
-        return -1;
-    }
-//    char* channel_ctext = malloc(strnlen(channel, LCM_MAX_CHANNEL_NAME_LENGTH)); FIXME: channel name encryption
-
     int payload_size = channel_size + 1 + ctextsize;
     if (payload_size <= LCM_SHORT_MESSAGE_MAX_SIZE) {
         // message is short.  send in a single packet
 
         g_static_mutex_lock(&lcm->transmit_lock); //FIXME: lcm_crypto should probably use this lock as well, or synchronize in a different way
 
-        lcm2_header_short_t hdr;
+        lcm2_header_short_secured_t hdr;
         hdr.magic = htonl(LCM2_MAGIC_SHORT_SECURED);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
-        hdr.sender_id = is_self_test ? 0: htons(lcm_get_sender_id(lcm->security_ctx, channel)); 
+        hdr.channelname_length = channel_size;
+        hdr.sender_id = htons(get_sender_id_from_cryptoctx(lcm->security_ctx, channel)); 
 
         struct iovec sendbufs[3];
         sendbufs[0].iov_base = (char *) &hdr;

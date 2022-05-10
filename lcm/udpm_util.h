@@ -72,8 +72,15 @@ typedef int SOCKET;
 typedef struct _lcm2_header_short {
     uint32_t magic;
     uint32_t msg_seqno;
-    uint16_t sender_id;
 } lcm2_header_short_t;
+
+typedef struct _lcm2_header_short_secured {
+    uint32_t magic;
+    uint32_t msg_seqno;
+    uint16_t sender_id;
+    uint8_t  channelname_length;
+} lcm2_header_short_secured_t;
+
 
 typedef struct _lcm2_header_long {
     uint32_t magic;
@@ -83,6 +90,16 @@ typedef struct _lcm2_header_long {
     uint16_t fragment_no;
     uint16_t fragments_in_msg;
 } lcm2_header_long_t;
+typedef struct _lcm2_header_long_secured {
+    uint32_t magic;
+    uint32_t msg_seqno;
+    uint32_t msg_size;
+    uint16_t sender_id;             
+    uint8_t  channelname_length;
+    uint32_t fragment_offset;
+    uint16_t fragment_no;
+    uint16_t fragments_in_msg;
+} lcm2_header_long_secured_t;
 // if fragment_no == 0, then header is immediately followed by NULL-terminated
 // ASCII-encoded channel name, followed by the payload data
 // if fragment_no > 0, then header is immediately followed by the payload data
