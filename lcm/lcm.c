@@ -58,7 +58,7 @@ extern void lcm_mpudpm_provider_init(GPtrArray *providers);
 extern void lcm_memq_provider_init(GPtrArray *providers);
 
 
-lcm_t* lcm_create_impl(const char* url, 
+static lcm_t* lcm_create_impl(const char* url, 
                 lcm_security_parameters *sec_params, //nullable if security is not desired
                 size_t param_len
                 ) {

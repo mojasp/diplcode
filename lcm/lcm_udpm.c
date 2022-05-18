@@ -375,27 +375,23 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
         return 0;
     }
 
-    lcmb->data_offset = sizeof(lcm2_header_short_t) + lcmb->channel_size + 1;
-
-    lcmb->data_size = sz - lcmb->data_offset;
-    char* rptext_buf = lcmb->buf + lcmb->data_offset;
-
-
     // if the packet has no subscribers, drop the message now.
     if (!lcm_try_enqueue_message(lcm->lcm, pkt_channel_str))
         return 0;
 
-    CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
-    char* ctext = malloc(lcmb->data_size); //FIXME:malloc from ringbuffer
-    memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
-    //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
-    memset(rptext_buf, 0, lcmb->data_size);
-
-    //FIXME use group decryption for self test for now, change this somehow
     int auth_result;
-    if(strncmp(pkt_channel_str, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0)
-        auth_result = lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
-    else {
+    if(!(strncmp(pkt_channel_str, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0)) {
+        lcmb->data_offset = sizeof(lcm2_header_short_t) + lcmb->channel_size + 1;
+
+        lcmb->data_size = sz - lcmb->data_offset;
+        char* rptext_buf = lcmb->buf + lcmb->data_offset;
+
+
+        CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
+        char* ctext = malloc(lcmb->data_size); //FIXME:malloc from ringbuffer
+        memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
+        //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
+        memset(rptext_buf, 0, lcmb->data_size);
 
         auth_result = lcm_decrypt_message(lcm->security_ctx, pkt_channel_str, sender_id, seqno, ctext, lcmb->data_size, rptext_buf, lcmb->data_size);
     }
@@ -619,28 +615,163 @@ static int lcm_udpm_subscribe(lcm_udpm_t *lcm, const char *channel)
     return _setup_recv_parts(lcm);
 }
 
-static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
+static int lcm_udpm_publish_insecure(lcm_udpm_t *lcm, const char *channel, const void *data,
+                            unsigned int datalen)
+{
+    int channel_size = strlen(channel);
+    if (channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
+        fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
+        return -1;
+    }
+
+    int payload_size = channel_size + 1 + datalen;
+    if (payload_size <= LCM_SHORT_MESSAGE_MAX_SIZE) {
+        // message is short.  send in a single packet
+
+        g_static_mutex_lock(&lcm->transmit_lock);
+
+        lcm2_header_short_t hdr;
+        hdr.magic = htonl(LCM2_MAGIC_SHORT);
+        hdr.msg_seqno = htonl(lcm->msg_seqno);
+
+        struct iovec sendbufs[3];
+        sendbufs[0].iov_base = (char *) &hdr;
+        sendbufs[0].iov_len = sizeof(hdr);
+        sendbufs[1].iov_base = (char *) channel;
+        sendbufs[1].iov_len = channel_size + 1;
+        sendbufs[2].iov_base = (char *) data;
+        sendbufs[2].iov_len = datalen;
+
+        // transmit
+        int packet_size = datalen + sizeof(hdr) + channel_size + 1;
+        dbg(DBG_LCM_MSG, "transmitting %d byte [%s] payload (%d byte pkt)\n", datalen, channel,
+            packet_size);
+
+        //        int status = writev (lcm->sendfd, sendbufs, 3);
+        struct msghdr msg;
+        msg.msg_name = (struct sockaddr *) &lcm->dest_addr;
+        msg.msg_namelen = sizeof(lcm->dest_addr);
+        msg.msg_iov = sendbufs;
+        msg.msg_iovlen = 3;
+        msg.msg_control = NULL;
+        msg.msg_controllen = 0;
+        msg.msg_flags = 0;
+        int status = sendmsg(lcm->sendfd, &msg, 0);
+
+        lcm->msg_seqno++;
+        g_static_mutex_unlock(&lcm->transmit_lock);
+
+        if (status == packet_size)
+            return 0;
+        else
+            return status;
+    } else {
+        // message is large.  fragment into multiple packets
+
+        int fragment_size = LCM_FRAGMENT_MAX_PAYLOAD;
+        int nfragments = payload_size / fragment_size + !!(payload_size % fragment_size);
+
+        if (nfragments > 65535) {
+            fprintf(stderr, "LCM error: too much data for a single message\n");
+            return -1;
+        }
+
+        // acquire transmit lock so that all fragments are transmitted
+        // together, and so that no other message uses the same sequence number
+        // (at least until the sequence # rolls over)
+        g_static_mutex_lock(&lcm->transmit_lock);
+        dbg(DBG_LCM_MSG, "transmitting %d byte [%s] payload in %d fragments\n", payload_size,
+            channel, nfragments);
+
+        uint32_t fragment_offset = 0;
+
+        lcm2_header_long_t hdr;
+        hdr.magic = htonl(LCM2_MAGIC_LONG);
+        hdr.msg_seqno = htonl(lcm->msg_seqno);
+        hdr.msg_size = htonl(datalen);
+        hdr.fragment_offset = 0;
+        hdr.fragment_no = 0;
+        hdr.fragments_in_msg = htons(nfragments);
+
+        // first fragment is special.  insert channel before data
+        int firstfrag_datasize = fragment_size - (channel_size + 1);
+        assert(firstfrag_datasize <= datalen);
+
+        struct iovec first_sendbufs[3];
+        first_sendbufs[0].iov_base = (char *) &hdr;
+        first_sendbufs[0].iov_len = sizeof(hdr);
+        first_sendbufs[1].iov_base = (char *) channel;
+        first_sendbufs[1].iov_len = channel_size + 1;
+        first_sendbufs[2].iov_base = (char *) data;
+        first_sendbufs[2].iov_len = firstfrag_datasize;
+
+        int packet_size = sizeof(hdr) + channel_size + 1 + firstfrag_datasize;
+        fragment_offset += firstfrag_datasize;
+        //        int status = writev (lcm->sendfd, first_sendbufs, 3);
+        struct msghdr msg;
+        msg.msg_name = (struct sockaddr *) &lcm->dest_addr;
+        msg.msg_namelen = sizeof(lcm->dest_addr);
+        msg.msg_iov = first_sendbufs;
+        msg.msg_iovlen = 3;
+        msg.msg_control = NULL;
+        msg.msg_controllen = 0;
+        msg.msg_flags = 0;
+        int status = sendmsg(lcm->sendfd, &msg, 0);
+
+        // transmit the rest of the fragments
+        for (uint16_t frag_no = 1; packet_size == status && frag_no < nfragments; frag_no++) {
+            hdr.fragment_offset = htonl(fragment_offset);
+            hdr.fragment_no = htons(frag_no);
+
+            int fraglen = MIN(fragment_size, datalen - fragment_offset);
+
+            struct iovec sendbufs[2];
+            sendbufs[0].iov_base = (char *) &hdr;
+            sendbufs[0].iov_len = sizeof(hdr);
+            sendbufs[1].iov_base = (char *) ((char *) data + fragment_offset);
+            sendbufs[1].iov_len = fraglen;
+
+            //            status = writev (lcm->sendfd, sendbufs, 2);
+            msg.msg_iov = sendbufs;
+            msg.msg_iovlen = 2;
+            status = sendmsg(lcm->sendfd, &msg, 0);
+
+            fragment_offset += fraglen;
+            packet_size = sizeof(hdr) + fraglen;
+        }
+
+        // sanity check
+        if (0 == status) {
+            assert(fragment_offset == datalen);
+        }
+
+        lcm->msg_seqno++;
+        g_static_mutex_unlock(&lcm->transmit_lock);
+    }
+
+    return 0;
+}
+
+static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const void *data,
                             unsigned int datalen)
 {
     if(!lcm->security_ctx) {
-        //FIXME: this should be allowed, but maybe signal that we don't want to encrypt in another way
-        fprintf(stderr, "%s\n", "not supporting unsecured lcm udp for now, dropping message...");
+        //FIXME: signal that we don't want to encrypt in another way - explicit part of the interface instead of nullpointer - to avoid missconfiguration
+        fprintf(stderr, "%s\n", "no security context associated with lcm instance, exiting...");
         return -1;
     }
+
+    int is_self_test = strncmp(channel, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0;
+    if(is_self_test) {
+        CRYPTO_DBG("%s\n", "use unencrypted publish for self-test");
+        return lcm_udpm_publish_insecure(lcm, channel, data, datalen);
+    }
+
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
 
     char* ctext = malloc(ctextsize); //FIXME: use malloc from ringbuffer, free this at some point
     
-    //FIXME: the self test might cause a nonce-reuse issue, deal with this somehow
-    //FIXME use group encryption for self test for now, change this somehow
-    int is_self_test = strncmp(channel, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0;
-    if(is_self_test) {
-        if(lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
-            CRYPTO_DBG("%s\n", "encryption failed!");
-            return -1;
-        }
-    }
-    else if (lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
+    if (lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
         CRYPTO_DBG("%s\n", "encryption failed!");
         return -1;
     }
@@ -783,6 +914,16 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
 
     return 0;
 }
+
+static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
+                            unsigned int datalen) {
+    if(!lcm->security_ctx) {
+        //FIXME: signal that we don't want to encrypt in another way - explicit part of the interface instead of missing pointer
+        return lcm_udpm_publish_insecure(lcm, channel, data, datalen);
+    }
+    return lcm_udpm_publish_secure(lcm, channel, data, datalen);
+}
+
 
 static int lcm_udpm_handle(lcm_udpm_t *lcm)
 {
