@@ -234,7 +234,132 @@ static void new_argument(gpointer key, gpointer value, gpointer user)
     }
 }
 
-static int _recv_message_fragment(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
+static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
+{
+    CRYPTO_DBG("%s", "receiving secured fragmented messages unimplemented");
+    return 1;
+#if 0
+    lcm2_header_long_t *hdr = (lcm2_header_long_t *) lcmb->buf;
+
+    uint32_t msg_seqno = ntohl(hdr->msg_seqno);
+    uint32_t data_size = ntohl(hdr->msg_size);
+    uint32_t fragment_offset = ntohl(hdr->fragment_offset);
+    //    uint16_t fragment_no = ntohs (hdr->fragment_no);
+    uint16_t fragments_in_msg = ntohs(hdr->fragments_in_msg);
+    uint32_t frag_size = sz - sizeof(lcm2_header_long_t);
+    char *data_start = (char *) (hdr + 1);
+
+    // any existing fragment buffer for this message source?
+    lcm_frag_key_t key;
+    key.from = &(lcmb->from);
+    key.msg_seqno = msg_seqno;
+    lcm_frag_buf_t *fbuf = lcm_frag_buf_store_lookup(lcm->frag_bufs, &key);
+
+    // discard any stale fragments from previous messages
+    if (fbuf && (fbuf->data_size != data_size)) {
+        lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
+        dbg(DBG_LCM, "Dropping message (missing %d fragments)\n", fbuf->fragments_remaining);
+        fbuf = NULL;
+    }
+
+    //    printf ("fragment %d/%d (offset %d/%d) seq %d packet sz: %d %p\n",
+    //        ntohs(hdr->fragment_no) + 1, fragments_in_msg,
+    //        fragment_offset, data_size, msg_seqno, sz, fbuf);
+
+    if (data_size > LCM_MAX_MESSAGE_SIZE) {
+        dbg(DBG_LCM, "rejecting huge message (%d bytes)\n", data_size);
+        return 0;
+    }
+
+    //if this is the first packet, set some values
+    char *channel = NULL;
+    if (hdr->fragment_no == 0) {
+        channel = (char*) (hdr + 1);
+        char *channel = (char *) (hdr + 1);
+        int channel_sz = strlen(channel);
+        if (channel_sz > LCM_MAX_CHANNEL_NAME_LENGTH) {
+            dbg(DBG_LCM, "bad channel name length\n");
+            lcm->udp_discarded_bad++;
+            return 0;
+        }
+        data_start += channel_sz + 1;
+        frag_size -= (channel_sz + 1);
+    }
+
+    if(!fbuf){
+        fbuf = lcm_frag_buf_new(*((struct sockaddr_in *) &lcmb->from), msg_seqno,
+                                data_size, fragments_in_msg, lcmb->recv_utime);
+        lcm_frag_buf_store_add(lcm->frag_bufs, fbuf);
+    }
+
+    if (channel!=NULL) {
+        strncpy (fbuf->channel, channel, sizeof (fbuf->channel));
+    }
+    
+#ifdef __linux__
+    if (lcm->kernel_rbuf_sz < 262145 && data_size > lcm->kernel_rbuf_sz &&
+        !lcm->warned_about_small_kernel_buf) {
+        fprintf(stderr,
+                "==== LCM Warning ===\n"
+                "LCM detected that large packets are being received, but the kernel UDP\n"
+                "receive buffer is very small.  The possibility of dropping packets due to\n"
+                "insufficient buffer space is very high.\n"
+                "\n"
+                "For more information, visit:\n"
+                "   http://lcm-proj.github.io/multicast_setup.html\n\n");
+        lcm->warned_about_small_kernel_buf = 1;
+    }
+#endif
+
+    if (fragment_offset + frag_size > fbuf->data_size) {
+        dbg(DBG_LCM, "dropping invalid fragment (off: %d, %d / %d)\n", fragment_offset, frag_size,
+            fbuf->data_size);
+        lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
+        return 0;
+    }
+
+    // copy data
+    memcpy(fbuf->data + fragment_offset, data_start, frag_size);
+    fbuf->last_packet_utime = lcmb->recv_utime;
+
+    fbuf->fragments_remaining--;
+
+    if (0 == fbuf->fragments_remaining) {
+        // complete message received.  Is there a subscriber that still
+        // wants it?  (i.e., does any subscriber have space in its queue?)
+        if (!lcm_try_enqueue_message(lcm->lcm, fbuf->channel)) {
+            // no... sad... free the fragment buffer and return
+            lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
+            return 0;
+        }
+
+        // yes, transfer the message into the lcm_buf_t
+
+        // deallocate the ringbuffer-allocated buffer
+        g_static_rec_mutex_lock(&lcm->mutex);
+        lcm_buf_free_data(lcmb, lcm->ringbuf);
+        g_static_rec_mutex_unlock(&lcm->mutex);
+
+        // transfer ownership of the message's payload buffer
+        lcmb->buf = fbuf->data;
+        fbuf->data = NULL;
+
+        strcpy(lcmb->channel_name, fbuf->channel);
+        lcmb->channel_size = strlen(lcmb->channel_name);
+        lcmb->data_offset = 0;
+        lcmb->data_size = fbuf->data_size;
+        lcmb->recv_utime = fbuf->last_packet_utime;
+
+        // don't need the fragment buffer anymore
+        lcm_frag_buf_store_remove(lcm->frag_bufs, fbuf);
+
+        return 1;
+    }
+
+    return 0;
+#endif
+}
+static int _recv_message_fragment_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
 {
     lcm2_header_long_t *hdr = (lcm2_header_long_t *) lcmb->buf;
 
@@ -356,7 +481,36 @@ static int _recv_message_fragment(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
     return 0;
 }
 
-static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
+static int _recv_short_message_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
+{
+    lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
+
+    // shouldn't have to worry about buffer overflow here because we
+    // zeroed out byte #65536, which is never written to by recv
+    const char *pkt_channel_str = (char *) (hdr2 + 1);
+
+    lcmb->channel_size = strlen(pkt_channel_str);
+
+    if (lcmb->channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
+        dbg(DBG_LCM, "bad channel name length\n");
+        lcm->udp_discarded_bad++;
+        return 0;
+    }
+
+    lcm->udp_rx++;
+
+    // if the packet has no subscribers, drop the message now.
+    if (!lcm_try_enqueue_message(lcm->lcm, pkt_channel_str))
+        return 0;
+
+    strcpy(lcmb->channel_name, pkt_channel_str);
+
+    lcmb->data_offset = sizeof(lcm2_header_short_t) + lcmb->channel_size + 1;
+
+    lcmb->data_size = sz - lcmb->data_offset;
+    return 1;
+}
+static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 {
     lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
 
@@ -388,7 +542,7 @@ static int _recv_short_message(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 
 
         CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
-        char* ctext = malloc(lcmb->data_size); //FIXME:malloc from ringbuffer
+        char* ctext = malloc(lcmb->data_size); //FIXME:use malloc from ringbuffer, memory leak as of now
         memcpy(ctext, lcmb->buf+lcmb->data_offset, lcmb->data_size);
         //after the cpy, we can clear the rptext_buf in which the decrypted message will be placed
         memset(rptext_buf, 0, lcmb->data_size);
@@ -542,9 +696,13 @@ static lcm_buf_t *udp_read_packet(lcm_udpm_t *lcm)
         lcm2_header_short_t *hdr2 = (lcm2_header_short_t *) lcmb->buf;
         uint32_t rcvd_magic = ntohl(hdr2->magic);
         if (rcvd_magic == LCM2_MAGIC_SHORT)
-            got_complete_message = _recv_short_message(lcm, lcmb, sz);
+            got_complete_message = _recv_short_message_unsecured(lcm, lcmb, sz);
         else if (rcvd_magic == LCM2_MAGIC_LONG)
-            got_complete_message = _recv_message_fragment(lcm, lcmb, sz);
+            got_complete_message = _recv_message_fragment_unsecured(lcm, lcmb, sz);
+        else if (rcvd_magic == LCM2_MAGIC_SHORT_SECURED)
+            got_complete_message = _recv_short_message_secured(lcm, lcmb, sz);
+        else if (rcvd_magic == LCM2_MAGIC_LONG_SECURED)
+            got_complete_message = _recv_message_fragment_secured(lcm, lcmb, sz);
         else {
             dbg(DBG_LCM, "LCM: bad magic\n");
             lcm->udp_discarded_bad++;
@@ -773,6 +931,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
     
     if (lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (char*) data, datalen, ctext, ctextsize)) {
         CRYPTO_DBG("%s\n", "encryption failed!");
+        fprintf(stderr, "LCM Error: encryption of message failed");
         return -1;
     }
 
@@ -790,7 +949,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         g_static_mutex_lock(&lcm->transmit_lock); //FIXME: lcm_crypto should probably use this lock as well, or synchronize in a different way
 
         lcm2_header_short_t hdr;
-        hdr.magic = htonl(LCM2_MAGIC_SHORT);
+        hdr.magic = htonl(LCM2_MAGIC_SHORT_SECURED);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
         hdr.sender_id = is_self_test ? 0: htons(lcm_get_sender_id(lcm->security_ctx, channel)); 
 
@@ -849,7 +1008,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         uint32_t fragment_offset = 0;
 
         lcm2_header_long_t hdr;
-        hdr.magic = htonl(LCM2_MAGIC_LONG);
+        hdr.magic = htonl(LCM2_MAGIC_LONG_SECURED);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
         hdr.msg_size = htonl(datalen);
         hdr.fragment_offset = 0;
