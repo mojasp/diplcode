@@ -520,7 +520,7 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 
     // shouldn't have to worry about buffer overflow here because we
     // zeroed out byte #65536, which is never written to by recv
-    const char *pkt_channel_str = (char *) (hdr2 + 1);
+    const char *pkt_channel_str_ct = (char *) (hdr2 + 1); //TODO in place decryption
 
     lcmb->channel_size = hdr2->channelname_length;
 
@@ -529,6 +529,8 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
         lcm->udp_discarded_bad++;
         return 0;
     }
+    char* pkt_channel_str = malloc(lcmb->channel_size + 1);
+    lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct, lcmb->channel_size +1 , pkt_channel_str , lcmb->channel_size+1);
 
     // if the packet has no subscribers, drop the message now.
     if (!lcm_try_enqueue_message(lcm->lcm, pkt_channel_str))
@@ -931,7 +933,8 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
         return -1;
     }
-//    char* channel_ctext = malloc(strnlen(channel, LCM_MAX_CHANNEL_NAME_LENGTH)); FIXME: channel name encryption
+    char* channel_ctext = malloc(channel_size+1);
+    lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, channel, channel_size+1, channel_ctext, channel_size+1);
 
     size_t ctextsize = datalen + LCMCRYPTO_TAGSIZE;
     char* ctext = malloc(ctextsize); //FIXME: use malloc from ringbuffer, free this at some point
@@ -957,7 +960,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         struct iovec sendbufs[3];
         sendbufs[0].iov_base = (char *) &hdr;
         sendbufs[0].iov_len = sizeof(hdr);
-        sendbufs[1].iov_base = (char *) channel;
+        sendbufs[1].iov_base = (char *) channel_ctext;
         sendbufs[1].iov_len = channel_size + 1;
         sendbufs[2].iov_base = (char *) ctext;
         sendbufs[2].iov_len = ctextsize;
