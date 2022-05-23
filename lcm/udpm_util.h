@@ -36,8 +36,8 @@ typedef int SOCKET;
 /************************* Important Defines *******************/
 #define LCM2_MAGIC_SHORT 0x4c433032  // hex repr of ascii "LC02"
 #define LCM2_MAGIC_LONG 0x4c433033   // hex repr of ascii "LC03"
-#define LCM2_MAGIC_SHORT_SECURED 0x4c433034  // hex repr of ascii "LC02"
-#define LCM2_MAGIC_LONG_SECURED 0x4c433035   // hex repr of ascii "LC03"
+#define LCM2_MAGIC_SHORT_SECURED 0x4c433034  
+#define LCM2_MAGIC_LONG_SECURED 0x4c433035  
 
 #ifdef __APPLE__
 #define LCM_SHORT_MESSAGE_MAX_SIZE 1435

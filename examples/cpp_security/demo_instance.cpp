@@ -43,8 +43,11 @@ class Handler {
                 printf("  orientation = (%f, %f, %f, %f)\n", msg->orientation[0], msg->orientation[1],
                        msg->orientation[2], msg->orientation[3]);
                 printf("  ranges:");
-                for (i = 0; i < msg->num_ranges; i++)
-                    printf(" %d", msg->ranges[i]);
+                int16_t expected = 0;
+                for (i = 0; i < msg->num_ranges; i++) {
+                    assert(expected++ == msg->ranges[i] );
+                //    printf(" %d\n", msg->ranges[i]);
+                }
                 printf("\n");
                 printf("  name        = '%s'\n", msg->name.c_str());
                 printf("  enabled     = %d\n", msg->enabled);
@@ -75,7 +78,12 @@ void send_on_channel(std::string channel, lcm::LCM& lcm, std::chrono::high_resol
         my_data.orientation[2] = 0;
         my_data.orientation[3] = 0;
 
-        my_data.num_ranges = 15;
+//#define SEND_FRAGMENTED
+#ifdef SEND_FRAGMENTED
+        my_data.num_ranges = 40000;
+#else
+        my_data.num_ranges = 16;
+#endif
         my_data.ranges.resize(my_data.num_ranges);
         for (int i = 0; i < my_data.num_ranges; i++)
             my_data.ranges[i] = i;

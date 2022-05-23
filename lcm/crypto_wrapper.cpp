@@ -19,41 +19,44 @@ using std::endl;
 #include <botan/stream_cipher.h>
 
 class crypto_ctx {
+    //Buffers to avoid allocations during runtime
+    Botan::secure_vector<uint8_t> IV; //buffer for IV to avoid allocation during execution
     public:
-        std::string algorithm;
+        const std::string algorithm;
 
-        Botan::secure_vector<uint8_t> salt;
-        uint16_t sender_id; 
-        Botan::secure_vector<uint8_t> key;
+        const Botan::secure_vector<uint8_t> salt;
+        const uint16_t sender_id; 
+        const Botan::secure_vector<uint8_t> key;
         const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
 
         crypto_ctx (lcm_security_parameters* params) :
             algorithm (params->algorithm),
             sender_id (params->sender_id),
             salt (Botan::hex_decode_locked(params->nonce)),
-            key (Botan::hex_decode_locked(params->key)) {}
+            key (Botan::hex_decode_locked(params->key)) {
+                IV.resize(LCMCRYPTO_IVSIZE);
+            }
 
 
-        Botan::secure_vector<uint8_t> get_decryption_IV( const uint32_t seqno, uint16_t sender_id) {
-            //IV shall be (sequid | sender_id | fixed/salt )
-            Botan::secure_vector<uint8_t> result;
-
+        Botan::secure_vector<uint8_t> &get_decryption_IV( const uint32_t seqno, uint16_t sender_id) {
             assert(LCMCRYPTO_IVSIZE==12); //nessecary for hardcoded values in this function here
-            result.resize(LCMCRYPTO_IVSIZE);
+            IV.resize(LCMCRYPTO_IVSIZE);
             assert(salt.size() == LCMCRYPTO_SESSION_NONCE_SIZE);
 
-            auto data = &result[0];
+            auto data = &IV[0];
             memcpy(data, &seqno, 4);
             memcpy(data + 4, &sender_id, 2);
             memcpy(data + 6, &salt[0], 6);
 
-            return result; //RVO should elide copy
+            return IV;
         }
-        Botan::secure_vector<uint8_t> get_encryption_IV( const uint32_t seqno) {
+        Botan::secure_vector<uint8_t> &get_encryption_IV( const uint32_t seqno) {
             return get_decryption_IV(seqno, this->sender_id);
         }
 
         template<typename Cipher> void set_cipher_key(Cipher& cipher);
+
+        Botan::secure_vector<uint8_t> crypto_buf; //reduce number of allocations during encryption and decryption
 };
 
 template<typename Cipher> void
@@ -61,6 +64,7 @@ crypto_ctx::set_cipher_key(Cipher& cipher) {
             cipher.set_key(&key[0], key.size());
 }
 
+//Collection ctx for the group + collection of crypto_ctx for each configured channel
 class _lcm_security_ctx {
     public:
         std::unique_ptr<crypto_ctx> group_ctx;
@@ -109,7 +113,7 @@ extern "C" lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters *p
 
 extern "C" void lcm_destroy_security_ctx (lcm_security_ctx* ctx){delete ctx;}
 
-extern "C" int lcm_encrypt_message(lcm_security_ctx* ctx, const char* channelname, uint32_t seqno, char* ptext, size_t ptextsize, char* ctext, size_t ctextsize) {
+extern "C" int lcm_encrypt_message(lcm_security_ctx* ctx, const char* channelname, uint32_t seqno, const uint8_t* ptext, size_t ptextsize, uint8_t** ctext) {
     auto crypto_ctx = ctx->get_crypto_ctx(channelname);
 
     if(!crypto_ctx) {
@@ -124,23 +128,19 @@ extern "C" int lcm_encrypt_message(lcm_security_ctx* ctx, const char* channelnam
 
     auto IV = crypto_ctx->get_encryption_IV(seqno);
     enc->start(IV);
-    Botan::secure_vector<uint8_t> ct(ptext, ptext + ptextsize);
-    enc->finish(ct);
+    
+    auto &buf = crypto_ctx->crypto_buf;
+    buf.resize(ptextsize);
+    memcpy(buf.data(), ptext, ptextsize);
+    enc->finish(buf);
     assert(enc->tag_size() == LCMCRYPTO_TAGSIZE);
-    //FIXME: stupid implementation for now, take advantage of in-place encryption later
-
-    if(ctextsize < ct.size()) {
-        fprintf(stderr, "ctext buffer too small\n");
-        return LCMCRYPTO_ENCRYPTION_ERROR;
-    }
-
-    memcpy(ctext, ct.data(), ct.size());
 
     CRYPTO_DBG("encrypted msg using %s with IV %s\n", enc->name().c_str(), Botan::hex_encode(IV).c_str());
-    return 0;
+    *ctext = buf.data();
+    return buf.size();
 }
 
-extern "C" int lcm_decrypt_message(lcm_security_ctx* ctx, const char* channelname, uint16_t sender_id, uint32_t seqno, char* ctext, size_t ctextsize, char* ptext, size_t ptextsize){
+extern "C" int lcm_decrypt_message(lcm_security_ctx* ctx, const char* channelname, uint16_t sender_id, uint32_t seqno, uint8_t* ctext, size_t ctextsize, uint8_t** rptext){
     auto crypto_ctx = ctx->get_crypto_ctx(channelname);
     if(!crypto_ctx) {
         fprintf(stderr, "Cannot decrypt message: no security context registered for channel %s\n", channelname);
@@ -148,30 +148,26 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx* ctx, const char* channelnam
     }
 
     auto dec = Botan::AEAD_Mode::create_or_throw("AES-128/GCM", Botan::DECRYPTION);
+    
     crypto_ctx->set_cipher_key(*dec);
     dec->set_associated_data((const uint8_t*) channelname, strnlen(channelname, LCM_MAX_CHANNEL_NAME_LENGTH));
 
     auto IV = crypto_ctx->get_decryption_IV(seqno, sender_id);
     try {
         dec->start(IV);
-        Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
-        dec->finish(pt);
-        //FIXME: stupid implementation for now, take advantage of in-place encryption later
-
-        if(ptextsize < pt.size()) {
-            fprintf(stderr, "ptext buffer too small\n");
-            return LCMCRYPTO_DECRYPTION_ERROR;
-        }
-
-        memcpy(ptext, pt.data(), pt.size());
+        auto &buf = crypto_ctx->crypto_buf;
+        buf.assign(ctext, ctext+ctextsize);
+        dec->finish(buf);
 
         CRYPTO_DBG("decrypted and authenticated msg using %s and IV = %s\n", dec->name().c_str(), Botan::hex_encode(IV).c_str());
+
+        *rptext = buf.data();
+        return buf.size();
     }
     catch(const Botan::Invalid_Authentication_Tag& err) {
         CRYPTO_DBG("%s, IV was %s\n", "got msg with invalid auth tag", Botan::hex_encode(IV).c_str());
         return LCMCRYPTO_INVALID_AUTH_TAG;
     }
-    return 0;
 }
 
 extern "C" int lcm_encrypt_channelname(lcm_security_ctx* ctx, uint32_t seqno, const char* ptext, size_t ptextsize, char* ctext, size_t ctextsize) {
