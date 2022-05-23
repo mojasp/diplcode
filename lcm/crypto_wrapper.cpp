@@ -91,10 +91,10 @@ class _lcm_security_ctx {
         }
     }
     ~_lcm_security_ctx() {
-        for (auto it = channel_ctx_map.begin(); it != channel_ctx_map.end(); it++) {
+        for (auto it = channel_ctx_map.begin(); it != channel_ctx_map.end();) {
             char* name = it->first;
             std::memset(name, 0, strnlen(name, LCM_MAX_CHANNEL_NAME_LENGTH)); //clear channelname, it may be confidential in some circumstances
-            channel_ctx_map.erase(it);
+            it = channel_ctx_map.erase(it);
             free(name);
         }
     }
