@@ -199,25 +199,25 @@ typedef struct {
      * Possible options are:
          "AES-128/GCM"
      */
-    const char* algorithm;
+    char* algorithm;
 
     /*
      * channelname that the security parameters are associated with
      * If NULL, associated them with the group / lcm provider
      */
-    const char* channelname; 
+    char* channelname; 
     /*
      * symmetric encryption key
      * hex encoded null terminated string, must be the appropriate length for the symmetric algorithm (i.e. a 16 byte key for AES-128)
      */
-    const char* key;
+    char* key;
 
     /* 
      * Session nonce
      * hex encoded null terminated string
      *      must be 6 bytes
      */
-    const char* nonce;
+    char* nonce;
     
     /*
      * sender ID unique to the channel within the multicastgroup

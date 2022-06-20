@@ -394,15 +394,96 @@ static void pylcm_dealloc(PyLCMObject *lcm_obj)
 
 static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
 {
+    printf("trace initibj\n ");
     dbg(DBG_PYTHON, "%s %p\n", __FUNCTION__, self);
     PyLCMObject *lcm_obj = (PyLCMObject *) self;
 
     char *url = NULL;
 
-    if (!PyArg_ParseTuple(args, "|s", &url))
+    PyObject* secParamList=NULL;
+    lcm_security_parameters *security_params=NULL; 
+    static char* keywords[] = { "", "sec_params", NULL };
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s$O!", keywords, &url, &PyList_Type ,&secParamList))
         return -1;
 
-    lcm_obj->lcm = lcm_create(url);
+    if(!secParamList)
+        lcm_obj->lcm = lcm_create(url);
+    else {
+        int sz = PyList_Size(secParamList);
+
+        security_params = calloc(sz, sizeof(lcm_security_parameters));
+
+        printf("init sec, sz = %i\n", sz);
+
+        for (int i = 0; i < sz; ++i) {
+            PyObject* dict = PyList_GetItem(secParamList, i);
+            if(!PyDict_Check(dict)) {
+                PyErr_SetString(PyExc_RuntimeError,"when initializing lcm with security, supply a list of dictionaries for the security parameters");
+                goto error;
+            }
+
+            PyObject *item;
+            PyObject* tuple;
+
+            item = PyDict_GetItemString(dict, "algorithm");
+            if(!item) {
+                goto error;
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected algorithm field in security parameters");
+            }
+            tuple = Py_BuildValue("(O)", item);
+            if(!tuple) goto error;
+            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].algorithm)))
+                goto error;
+
+            item = PyDict_GetItemString(dict, "channelname");
+            if(!item) {
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected channelname field in security parameters");
+                goto error;
+            }
+            tuple = Py_BuildValue("(O)", item);
+            if(!tuple) goto error;
+            if(!PyArg_ParseTuple(tuple, "z", &(security_params[i].channelname)))
+                goto error;
+
+            item = PyDict_GetItemString(dict, "key");
+            if(!item) {
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected key field in security parameters");
+                goto error;
+            }
+            tuple = Py_BuildValue("(O)", item);
+            if(!tuple) goto error;
+            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].key)))
+                goto error;
+
+            item = PyDict_GetItemString(dict, "nonce");
+            if(!item) {
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected nonce field in security parameters");
+                goto error;
+            }
+            tuple = Py_BuildValue("(O)", item);
+            if(!tuple) goto error;
+            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].nonce)))
+                goto error;
+
+            item = PyDict_GetItemString(dict, "sender_id");
+            if(!item) {
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected sender_id field in security parameters");
+                goto error;
+            }
+            if(!item) goto error;
+            tuple = Py_BuildValue("(O)", item);
+            if(!tuple) goto error;
+            if(!PyArg_ParseTuple(tuple, "h", &(security_params[i].sender_id)))
+                goto error;
+
+            printf("Test\n");
+
+            printf("Params: algorithm %s chname %s key %s nonce %s sender_id %i\n", security_params[i].algorithm, security_params[i].channelname, security_params[i].key, security_params[i].nonce, security_params[i].sender_id);
+        }
+
+        lcm_obj->lcm = lcm_create_with_security(url, security_params, sz);
+    }
+
     if (!lcm_obj->lcm) {
         PyErr_SetString(PyExc_RuntimeError, "Couldn't create LCM");
         return -1;
@@ -410,6 +491,9 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
     lcm_obj->saved_thread_state = NULL;
 
     return 0;
+error:
+    if(security_params) free(security_params);
+    return -1;
 }
 
 /* Type object for socket objects. */
