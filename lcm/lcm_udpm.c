@@ -236,6 +236,10 @@ static void new_argument(gpointer key, gpointer value, gpointer user)
 
 static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
 {
+    if(!lcm->security_ctx){
+        CRYPTO_DBG("%s\n", "received secured message, but there is no security context configured for this lcm instance. Dropping message...");
+        return 0;
+    }
     CRYPTO_DBG("%s\n", "receiving secured fragmented message");
     lcm2_header_long_secured_t *hdr = (lcm2_header_long_secured_t *) lcmb->buf;
 
@@ -546,6 +550,10 @@ static int _recv_short_message_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int s
 
 static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 {
+    if(!lcm->security_ctx){
+        CRYPTO_DBG("%s\n", "received secured message, but there is no security context configured for this lcm instance. Dropping message");
+        return 0;
+    }
     lcm2_header_short_secured_t *hdr2 = (lcm2_header_short_secured_t *) lcmb->buf;
 
     uint32_t seqno = ntohl(hdr2->msg_seqno);
