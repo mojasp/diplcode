@@ -384,6 +384,10 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
 }
 static int _recv_message_fragment_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
 {
+    if(lcm->security_ctx) {
+        CRYPTO_DBG("%s\n", "received unsecured message, but lcm is initiated with security enabled. Dropping message...\n");
+        return 0;
+    }
     lcm2_header_long_t *hdr = (lcm2_header_long_t *) lcmb->buf;
 
     uint32_t msg_seqno = ntohl(hdr->msg_seqno);
@@ -511,6 +515,12 @@ static int _recv_short_message_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int s
     // shouldn't have to worry about buffer overflow here because we
     // zeroed out byte #65536, which is never written to by recv
     const char *pkt_channel_str = (char *) (hdr2 + 1);
+
+    int is_self_test = strncmp(pkt_channel_str, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0;
+    if(!is_self_test && lcm->security_ctx) {
+        CRYPTO_DBG("%s\n", "received unsecured message, but lcm is initiated with security enabled. Dropping message...\n");
+        return 0;
+    }
 
     lcmb->channel_size = strlen(pkt_channel_str);
 
@@ -1458,8 +1468,10 @@ lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashT
     lcm_udpm_t *lcm = (lcm_udpm_t *) calloc(1, sizeof(lcm_udpm_t));
 
 
-    if(!sec_params) 
+    if(!sec_params) {
         fprintf(stderr, "Warning: initializing LCM UDPM Provider without security!\n");
+        lcm->security_ctx = NULL; //already null due to calloc, but be explicit anyways
+    }
     else {
         fprintf(stderr, "Initializing LCM UDPM Provider with security enabled\n");
         lcm->security_ctx = lcm_create_security_ctx(sec_params, param_len);
