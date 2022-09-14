@@ -32,7 +32,7 @@ typedef int SOCKET;
 #include "lcm.h"
 #include "ringbuffer.h"
 
-#include "crypto_wrapper.h"
+#include "lcmsec/crypto_wrapper.h"
 /************************* Important Defines *******************/
 #define LCM2_MAGIC_SHORT 0x4c433032  // hex repr of ascii "LC02"
 #define LCM2_MAGIC_LONG 0x4c433033   // hex repr of ascii "LC03"

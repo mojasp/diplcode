@@ -11,7 +11,7 @@
 #include "lcm.h"
 #include "lcm_internal.h"
 
-#include "crypto_wrapper.h"
+#include "lcmsec/crypto_wrapper.h"
 
 #ifdef WIN32
 #include <winsock2.h>

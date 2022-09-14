@@ -32,7 +32,7 @@
 
 #include <glib.h>
 
-#include "crypto_wrapper.h"
+#include "lcmsec/crypto_wrapper.h"
 
 #include "dbg.h"
 #include "lcm.h"

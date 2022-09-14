@@ -14,7 +14,8 @@ set(lcm_sources
   udpm_util.c
   lcmtypes/channel_port_map_update_t.c
   lcmtypes/channel_to_port_t.c
-  crypto_wrapper.cpp
+  lcmsec/crypto_wrapper.cpp
+  lcmsec/gkexchg.cpp
 )
 
 set(lcm_install_headers
