@@ -16,10 +16,44 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <stack>
 #include <vector>
 
 #include "lcm-cpp.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
+
+namespace lcmsec_impl {
+
+/**
+ * @class eventloop
+ * @brief Simple, single threaded event loop to facilitate multiple group key exchanges (in case
+ * multiple channels are configured) Since lcm does not require linking pthread, we do not want to
+ * be dependent on threads here either.
+ *
+ * Right now implemented with a stack. Can be more efficient by using lcm_get_fileno and poll/select 
+ */
+class eventloop {
+  public:
+    using task_t = std::function<void()>;
+    std::stack<task_t> tasks;
+
+  public:
+    void push_task(eventloop::task_t task){
+        tasks.push(std::move(task));
+    }
+
+    void run() {
+        while(!tasks.empty()) {
+            auto t = tasks.top();
+            t();
+            tasks.pop();
+        }
+    }
+};
+
+}  // namespace lcmsec_impl
+
+gkexch_manager::gkexch_manager(const std::vector<std::string> channelnames) {}
 
 const static std::string emca = "EMSA1(SHA-256)";
 // sign using ESMSA1 with SHA-256 over secp521r1
@@ -63,26 +97,24 @@ class ecdsa_public {
     }
 };
 
-static void generate_testing_keypairs()
-{
-    for (int i = 1; i < 5; i++) {
-        Botan::AutoSeeded_RNG rng;
-        Botan::ECDSA_PrivateKey key(rng, Botan::EC_Group("secp521r1"));
-
-        std::ofstream o;  // ofstream is the class for fstream package
-        std::string filename = "testkeys/user" + std::to_string(i);
-        o.open(filename + ".priv");  // open is the method of ofstream
-        o << Botan::PKCS8::PEM_encode(key);
-        o.close();
-        o.open(filename + ".pub");  // open is the method of ofstream
-        o << Botan::X509::PEM_encode(key);
-        o.close();
-    }
-}
+// static void generate_testing_keypairs()
+// {
+//     for (int i = 1; i < 5; i++) {
+//         Botan::AutoSeeded_RNG rng;
+//         Botan::ECDSA_PrivateKey key(rng, Botan::EC_Group("secp521r1"));
+//         std::ofstream o;  // ofstream is the class for fstream package
+//         std::string filename = "testkeys/user" + std::to_string(i);
+//         o.open(filename + ".priv");  // open is the method of ofstream
+//         o << Botan::PKCS8::PEM_encode(key);
+//         o.close();
+//         o.open(filename + ".pub");  // open is the method of ofstream
+//         o << Botan::X509::PEM_encode(key);
+//         o.close();
+//     }
+// }
 
 Dutta_Barua_GKE::Dutta_Barua_GKE()
 {
-    generate_testing_keypairs();
     printf("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
     printf("----round 1-----\n");
 
@@ -101,7 +133,6 @@ Dutta_Barua_GKE::Dutta_Barua_GKE()
 
     printf("X (bigint) needs %lu bytes for storage\n", X.bits());
 
-    
     ecdsa_private dsa_private(uid.u);
     auto signer = dsa_private.signer();
     Dutta_Barua_message r1_message;
