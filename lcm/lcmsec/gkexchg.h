@@ -1,31 +1,29 @@
 #ifndef GKEXCHG_H
 #define GKEXCHG_H
 
+#include <memory>
 #include <string>
 #include <vector>
 
-class gkexch_manager {
+#include "lcm.h"
+#include "lcmsec/eventloop.hpp"
+
+namespace lcmsec_impl {
+
+class Dutta_Barua_GKE;
+
+class Key_Exchange_Manager {
   public:
     /**
-     * @brief Initialize group key exchange on the configured channels
+     * @brief Perform group key exchange on the configured channels
      *
      * @param channels the channels on which the groupkeyexchange shall take space
+     * @param eventloop event loop used to facilitate the key exchange
      */
-    gkexch_manager(const std::vector<std::string> channels);
-};
-
-class Dutta_Barua_GKE {
-  public:
-    Dutta_Barua_GKE();
+    explicit Key_Exchange_Manager(std::string channelname, eventloop& ev_loop);
 
   private:
-    struct user_id {
-        int u, d;
-    };
-    const user_id uid{1, 1};
-    std::vector<user_id> partial_session_id;
-
-    void round1();
+    std::shared_ptr<Dutta_Barua_GKE> impl;
 };
-
+}  // namespace lcmsec_impl
 #endif  // !GKEXCHG_H

@@ -24,36 +24,20 @@
 
 namespace lcmsec_impl {
 
-/**
- * @class eventloop
- * @brief Simple, single threaded event loop to facilitate multiple group key exchanges (in case
- * multiple channels are configured) Since lcm does not require linking pthread, we do not want to
- * be dependent on threads here either.
- *
- * Right now implemented with a stack. Can be more efficient by using lcm_get_fileno and poll/select 
- */
-class eventloop {
+class Dutta_Barua_GKE {
   public:
-    using task_t = std::function<void()>;
-    std::stack<task_t> tasks;
+    Dutta_Barua_GKE(std::string channelname);
+    void round1(eventloop& ev_loop);
 
-  public:
-    void push_task(eventloop::task_t task){
-        tasks.push(std::move(task));
-    }
+  private:
+    std::string channelname;
+    struct user_id {
+        int u, d;
+    };
+    const user_id uid{1, 1};
+    std::vector<user_id> partial_session_id;
 
-    void run() {
-        while(!tasks.empty()) {
-            auto t = tasks.top();
-            t();
-            tasks.pop();
-        }
-    }
 };
-
-}  // namespace lcmsec_impl
-
-gkexch_manager::gkexch_manager(const std::vector<std::string> channelnames) {}
 
 const static std::string emca = "EMSA1(SHA-256)";
 // sign using ESMSA1 with SHA-256 over secp521r1
@@ -66,7 +50,7 @@ class ecdsa_private {
     ecdsa_private(int uid)
     {
         if (uid > 4 || uid <= 0)
-            throw std::out_of_range("uid out of range [1,4]");
+            throw std::out_of_range("uid out of range [1,4], was " + std::to_string(uid));
         std::string filename = "testkeys/user" + std::to_string(uid) + ".priv";
         key = std::unique_ptr<Botan::Private_Key>(Botan::PKCS8::load_key(filename, rng));
     }
@@ -86,7 +70,7 @@ class ecdsa_public {
     ecdsa_public(int uid)
     {
         if (uid > 4 || uid <= 0)
-            throw std::out_of_range("uid out of range [1,4]");
+            throw std::out_of_range("uid out of range [1,4], was " + std::to_string(uid));
         std::string filename = "testkeys/user" + std::to_string(uid) + ".pub";
         key = std::unique_ptr<Botan::Public_Key>(Botan::X509::load_key(filename));
     }
@@ -113,8 +97,11 @@ class ecdsa_public {
 //     }
 // }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE()
+Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname) : channelname(std::move(channelname))
 {
+}
+
+void Dutta_Barua_GKE::round1(eventloop& ev_loop) {
     printf("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
     printf("----round 1-----\n");
 
@@ -158,7 +145,6 @@ Dutta_Barua_GKE::Dutta_Barua_GKE()
                                          (int8_t *) (signature.data() + r1_message.sig_size));
 
     //----- Send over the air - shim for now -------- ///
-    const std::string channelname = "example";
     lcm::LCM lcm;
 
     Dutta_Barua_message received;
@@ -169,7 +155,7 @@ Dutta_Barua_GKE::Dutta_Barua_GKE()
 
     lcm.publish("example", &r1_message);
     printf("waiting on key exchange messages\n");
-    lcm.handleTimeout(500);
+    lcm.handleTimeout(500); //does not receive atm which does make sense, task is queued.
 
     //------- Decode and check signature --------//
     ecdsa_public dsa_public(received.u);
@@ -181,6 +167,18 @@ Dutta_Barua_GKE::Dutta_Barua_GKE()
     bool success =
         verifier->check_signature((const uint8_t *) received.sig.data(), received.sig_size);
     printf("verified signature successfully\n");
+
 }
 
-void Dutta_Barua_GKE::round1() {}
+
+Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop& ev_loop) : impl(std::make_unique<Dutta_Barua_GKE>(std::move(channelname)))
+{
+    auto r1 = [&]() {
+        impl->round1(ev_loop);
+    };
+    ev_loop.push_task(r1);
+}
+
+
+}  // namespace lcmsec_impl
+

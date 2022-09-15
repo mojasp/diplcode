@@ -10,11 +10,16 @@
 #include <botan/stream_cipher.h>
 #include <udpm_util.h>
 
+#include <functional>
 #include <iostream>
 #include <map>
+#include <stack>
 #include <string>
 
 #include "gkexchg.h"
+#include "lcmsec/eventloop.hpp"
+
+namespace lcmsec_impl {
 
 // Crypotgraphy for a specific channel or group
 class crypto_ctx {
@@ -28,16 +33,16 @@ class crypto_ctx {
     const Botan::secure_vector<uint8_t> key;
     const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
 
-    explicit crypto_ctx(lcm_security_parameters *params)
+    Key_Exchange_Manager keyExchangeManager;
+
+    explicit crypto_ctx(Key_Exchange_Manager mgr, lcm_security_parameters *params)
         : algorithm(params->algorithm),
           sender_id(params->sender_id),
           salt(Botan::hex_decode_locked(params->nonce)),
-          key(Botan::hex_decode_locked(params->key))
+          key(Botan::hex_decode_locked(params->key)),
+          keyExchangeManager(mgr)
     {
         IV.resize(LCMCRYPTO_IVSIZE);
-
-        Dutta_Barua_GKE gkexchg_instance;
-        // For now use this as an entrypoint to run the GKEXCHANGE
     }
 
     Botan::secure_vector<uint8_t> &get_decryption_IV(const uint32_t seqno, uint16_t sender_id)
@@ -59,23 +64,22 @@ class crypto_ctx {
     }
 
     template <typename Cipher>
-    void set_cipher_key(Cipher &cipher);
+    void set_cipher_key(Cipher &cipher)
+    {
+        cipher.set_key(&key[0], key.size());
+    }
 
     Botan::secure_vector<uint8_t>
         crypto_buf;  // reduce number of allocations during encryption and decryption
 };
 
-template <typename Cipher>
-void crypto_ctx::set_cipher_key(Cipher &cipher)
-{
-    cipher.set_key(&key[0], key.size());
-}
+}  // namespace lcmsec_impl
 
 // Collection ctx for the group + collection of crypto_ctx for each configured channel
 // entrypoint for the cpp implementation of the crypto
 class _lcm_security_ctx {
   public:
-    std::unique_ptr<crypto_ctx> group_ctx;
+    std::unique_ptr<lcmsec_impl::crypto_ctx> group_ctx;
 
   private:
     // Use map with std::string as keys for storage; but compare with char* so we avoid additional
@@ -87,20 +91,29 @@ class _lcm_security_ctx {
         }
     };
 
-    std::map<char *, std::unique_ptr<crypto_ctx>, str_cmp> channel_ctx_map;
+    std::map<char *, std::unique_ptr<lcmsec_impl::crypto_ctx>, str_cmp> channel_ctx_map;
 
   public:
     _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
     {
+        lcmsec_impl::eventloop ev_loop;
+
         for (int i = 0; i < param_len; i++) {
             if (params[i].channelname == nullptr) {
-                group_ctx = std::make_unique<crypto_ctx>(params + i);
+                // FIXME: Group context does not perform group key exchange for now - is static
+                // Probably there should be a specialized subclass for the group_ctx too
+                lcmsec_impl::Key_Exchange_Manager keyExchangeManager(std::string("keyxchg_channel_group"), ev_loop);
+                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager), params + i);
             } else {
+                lcmsec_impl::Key_Exchange_Manager keyExchangeManager(params[i].channelname, ev_loop);
                 channel_ctx_map[strndup(params[i].channelname, LCM_MAX_CHANNEL_NAME_LENGTH)] =
-                    std::make_unique<crypto_ctx>(params + i);
+                    std::make_unique<lcmsec_impl::crypto_ctx>(keyExchangeManager, params + i);
             }
         }
+
+        ev_loop.run();
     }
+
     ~_lcm_security_ctx()
     {
         for (auto it = channel_ctx_map.begin(); it != channel_ctx_map.end();) {
@@ -114,7 +127,7 @@ class _lcm_security_ctx {
         }
     }
 
-    crypto_ctx *get_crypto_ctx(const char *channelname)
+    lcmsec_impl::crypto_ctx *get_crypto_ctx(const char *channelname)
     {
         // cppcheck-suppress cstyleCast
         auto it = channel_ctx_map.find((char *) channelname);
