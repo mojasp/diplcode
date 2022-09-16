@@ -33,14 +33,14 @@ class crypto_ctx {
     const Botan::secure_vector<uint8_t> key;
     const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
 
-    Key_Exchange_Manager keyExchangeManager;
+    std::unique_ptr<Key_Exchange_Manager> keyExchangeManager;
 
-    explicit crypto_ctx(Key_Exchange_Manager mgr, lcm_security_parameters *params)
+    explicit crypto_ctx(std::unique_ptr<Key_Exchange_Manager> mgr, lcm_security_parameters *params)
         : algorithm(params->algorithm),
           sender_id(params->sender_id),
           salt(Botan::hex_decode_locked(params->nonce)),
           key(Botan::hex_decode_locked(params->key)),
-          keyExchangeManager(mgr)
+          keyExchangeManager(std::move(mgr))
     {
         IV.resize(LCMCRYPTO_IVSIZE);
     }
@@ -96,18 +96,34 @@ class _lcm_security_ctx {
   public:
     _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
     {
-        lcmsec_impl::eventloop ev_loop;
+        lcm::LCM lcm;  // FIXME use nondefault instance (respecting initialization parameters)
+        //---Perform group key xchange for configured channels---
+        lcmsec_impl::eventloop ev_loop(
+            lcm, param_len);  // Param len is the number of channels that shall be configured
 
         for (int i = 0; i < param_len; i++) {
             if (params[i].channelname == nullptr) {
-                // FIXME: Group context does not perform group key exchange for now - is static
-                // Probably there should be a specialized subclass for the group_ctx too
-                lcmsec_impl::Key_Exchange_Manager keyExchangeManager(std::string("keyxchg_channel_group"), ev_loop);
-                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager), params + i);
+                // FIXME: Group context channelname for key exchange
+                std::string group_keyxchg_channel = "group_keyxchg_channel";
+
+                auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
+                    group_keyxchg_channel, ev_loop, lcm);
+                lcm.subscribe(group_keyxchg_channel,
+                              &lcmsec_impl::Key_Exchange_Manager::handleMessage,
+                              keyExchangeManager.get());
+                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
+                                                                      params + i);
             } else {
-                lcmsec_impl::Key_Exchange_Manager keyExchangeManager(params[i].channelname, ev_loop);
+                auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
+                    std::string(params[i].channelname), ev_loop, lcm);
+
+                std::string keyxch_channel = params[i].channelname;
+                lcm.subscribe(keyxch_channel,
+                              &lcmsec_impl::Key_Exchange_Manager::handleMessage,
+                              keyExchangeManager.get());
                 channel_ctx_map[strndup(params[i].channelname, LCM_MAX_CHANNEL_NAME_LENGTH)] =
-                    std::make_unique<lcmsec_impl::crypto_ctx>(keyExchangeManager, params + i);
+                    std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
+                                                              params + i);
             }
         }
 

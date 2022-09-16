@@ -24,21 +24,6 @@
 
 namespace lcmsec_impl {
 
-class Dutta_Barua_GKE {
-  public:
-    Dutta_Barua_GKE(std::string channelname);
-    void round1(eventloop& ev_loop);
-
-  private:
-    std::string channelname;
-    struct user_id {
-        int u, d;
-    };
-    const user_id uid{1, 1};
-    std::vector<user_id> partial_session_id;
-
-};
-
 const static std::string emca = "EMSA1(SHA-256)";
 // sign using ESMSA1 with SHA-256 over secp521r1
 class ecdsa_private {
@@ -86,22 +71,19 @@ class ecdsa_public {
 //     for (int i = 1; i < 5; i++) {
 //         Botan::AutoSeeded_RNG rng;
 //         Botan::ECDSA_PrivateKey key(rng, Botan::EC_Group("secp521r1"));
-//         std::ofstream o;  // ofstream is the class for fstream package
+//         std::ofstream o;
 //         std::string filename = "testkeys/user" + std::to_string(i);
-//         o.open(filename + ".priv");  // open is the method of ofstream
+//         o.open(filename + ".priv");
 //         o << Botan::PKCS8::PEM_encode(key);
 //         o.close();
-//         o.open(filename + ".pub");  // open is the method of ofstream
+//         o.open(filename + ".pub");
 //         o << Botan::X509::PEM_encode(key);
 //         o.close();
 //     }
 // }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname) : channelname(std::move(channelname))
+void Dutta_Barua_GKE::round1()
 {
-}
-
-void Dutta_Barua_GKE::round1(eventloop& ev_loop) {
     printf("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
     printf("----round 1-----\n");
 
@@ -143,42 +125,44 @@ void Dutta_Barua_GKE::round1(eventloop& ev_loop) {
     r1_message.sig_size = signature.size();
     r1_message.sig = std::vector<int8_t>((int8_t *) signature.data(),
                                          (int8_t *) (signature.data() + r1_message.sig_size));
+    lcm.publish(channelname, &r1_message);
+}
 
-    //----- Send over the air - shim for now -------- ///
-    lcm::LCM lcm;
+Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm)
+    : channelname(std::move(channelname)), evloop(ev_loop), lcm(lcm)
+{
+}
 
-    Dutta_Barua_message received;
-    lcm::LCM::HandlerFunction<Dutta_Barua_message> handler =
-        [&](const lcm::ReceiveBuffer *rbuf, const std::string &channel,
-            const Dutta_Barua_message *msg) { received = *msg; };
-    lcm.subscribe(channelname, handler);
-
-    lcm.publish("example", &r1_message);
-    printf("waiting on key exchange messages\n");
-    lcm.handleTimeout(500); //does not receive atm which does make sense, task is queued.
+void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
+{
+    // Check first whether or not the package is interesting to us
+    if (msg->round == 1 && !is_neighbour(msg->u))
+        return;
 
     //------- Decode and check signature --------//
-    ecdsa_public dsa_public(received.u);
+    ecdsa_public dsa_public(msg->u);
     auto verifier = dsa_public.verifier();
-    verifier->update((const uint8_t *) &received.u, 4);
-    verifier->update(received.round);
-    verifier->update((const uint8_t *) received.public_value.data(), received.public_value_size);
-    verifier->update((const uint8_t *) &received.d, 4);
-    bool success =
-        verifier->check_signature((const uint8_t *) received.sig.data(), received.sig_size);
+    verifier->update((const uint8_t *) &msg->u, 4);
+    verifier->update(msg->round);
+    verifier->update((const uint8_t *) msg->public_value.data(), msg->public_value_size);
+    verifier->update((const uint8_t *) &msg->d, 4);
+    bool success = verifier->check_signature((const uint8_t *) msg->sig.data(), msg->sig_size);
     printf("verified signature successfully\n");
-
 }
 
-
-Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop& ev_loop) : impl(std::make_unique<Dutta_Barua_GKE>(std::move(channelname)))
+Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
+                                           lcm::LCM &lcm)
+    : impl(channelname, ev_loop, lcm)
 {
-    auto r1 = [&]() {
-        impl->round1(ev_loop);
-    };
+    auto r1 = [=] { this->impl.round1(); };
     ev_loop.push_task(r1);
-}
+};
 
+void Key_Exchange_Manager::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                                         const Dutta_Barua_message *msg)
+{
+    printf("got msg on channel %s \n", chan.c_str());
+    impl.on_msg(msg);
+}
 
 }  // namespace lcmsec_impl
-

@@ -6,7 +6,6 @@
 #include <queue>
 
 #include "lcm-cpp.hpp"
-#include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
 /*
@@ -18,7 +17,7 @@ namespace lcmsec_impl {
  *  the groupkeyexchange for each channel sequentially would be grossly inefficient; Thus we need
  *  some form of eventloop that supports lcm.
  *
- * Pseudocode of the group key exchange logic/usage of the eventloop:
+ * rough Pseudocode of the group key exchange logic/usage of the eventloop:
  * begin:
  *
  *  lcm = lcm_instance;
@@ -43,8 +42,7 @@ namespace lcmsec_impl {
  *      lcm.subscribe(ch.channelname, lcmcallback)
  *
  *      m = new keyexchgmanager(ch)
- *      managers.add(m)
- *      ev.register_task(m.do_round_1, manager)
+ *      managers.add(m) //will register round 1
  *
  *  evloop.run()
  *
@@ -83,13 +81,13 @@ class eventloop {
         : lcm(lcm), unfinished_channels(unfinished_channels), lcm_timeout_ms(lcm_timeout_ms)
     {
     }
-    inline void push_task(eventloop::task_t task) { tasks.push(std::move(task)); }
+    inline void push_task(eventloop::task_t task) { tasks.push(task); }
 
     inline void run()
     {
         while (!tasks.empty() || unfinished_channels > 0) {
-            if(!tasks.empty()) {
-                auto t = tasks.back();
+            if (!tasks.empty()) {
+                auto t = tasks.front();
                 t();
                 tasks.pop();
             }
@@ -98,32 +96,8 @@ class eventloop {
             }
         }
     }
-};
 
-/**
- * @class LCM_listener
- * @brief provide easier means of registering an lcm callback.
- *
- */
-class LCM_listener {
-    constexpr static int lcm_timeout_ms = 50;
-    using callback_t = std::function<int(const Dutta_Barua_message *msg, eventloop &evloop)>;
-    callback_t on_msg;
-
-    eventloop &evloop;
-
-    inline void handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
-                              const Dutta_Barua_message *msg)
-    {
-        on_msg(msg, evloop);
-    }
-
-    LCM_listener(lcm::LCM &instance, const std::string &channelname, callback_t on_msg,
-                 eventloop &loop)
-        : on_msg(std::move(on_msg)), evloop(loop)
-    {
-        instance.subscribe(channelname, &LCM_listener::handleMessage, this);
-    }
+    inline void channel_finished() {unfinished_channels--;}
 };
 
 }  // namespace lcmsec_impl
