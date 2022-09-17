@@ -85,8 +85,8 @@ class ecdsa_public {
 
 void Dutta_Barua_GKE::round1()
 {
-    CRYPTO_DBG("%s", "Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
-    CRYPTO_DBG("%s", "----round 1-----\n");
+    debug("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
+    debug("----round 1-----");
 
     partial_session_id.push_back(uid);  // initialize the partial session id with
 
@@ -100,8 +100,6 @@ void Dutta_Barua_GKE::round1()
     // public value; i.e. g^x mod q; where x is private key. This public value is called capital X
     // in Dutta Barua paper
     Botan::BigInt X = privKey.get_y();
-
-    CRYPTO_DBG("X (bigint) needs %lu bytes for storage\n", X.bits());
 
     ecdsa_private dsa_private(uid.u);
     auto signer = dsa_private.signer();
@@ -129,8 +127,8 @@ void Dutta_Barua_GKE::round1()
     lcm.publish(channelname, &r1_message);
 }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm)
-    : channelname(std::move(channelname)), evloop(ev_loop), lcm(lcm)
+Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm, int uid)
+    : channelname(std::move(channelname)), evloop(ev_loop), lcm(lcm), uid{uid+1, 1}
 {
 }
 
@@ -154,15 +152,13 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
     ecdsa_public dsa_public(msg->u);
     if (!verify_db_message(msg, dsa_public))
         return;
-    CRYPTO_DBG("%s", "verified signature successfully\n");
+    debug("verified signature successfully");
 
     if (msg->round == 1) {
         if (is_left_neighbour(msg))
             r1_messages.left = *msg;
-        else {
-            assert(is_right_neighbour(msg));
+        if(is_right_neighbour(msg))
             r1_messages.right = *msg;
-        }
     } else {
         if (msg->round != 2) {
             auto error = "keyexchange on channel " + channelname +
@@ -183,16 +179,16 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
 
 void Dutta_Barua_GKE::round2()
 {
-    CRYPTO_DBG("Channel %s : round2()", channelname.c_str());
+    debug(("Channel" + channelname + " : round2()").c_str());
 }
 void Dutta_Barua_GKE::computeKey()
 {
-    CRYPTO_DBG("Channel %s : computeKey()", channelname.c_str());
+    debug(("Channel "+channelname+" : computeKey()").c_str());
 }
 
 Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
-                                           lcm::LCM &lcm)
-    : impl(channelname, ev_loop, lcm)
+                                           lcm::LCM &lcm, int uid)
+    : impl(channelname, ev_loop, lcm, uid)
 {
     auto r1 = [=] { this->impl.round1(); };
     ev_loop.push_task(r1);
@@ -201,7 +197,6 @@ Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &e
 void Key_Exchange_Manager::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                          const Dutta_Barua_message *msg)
 {
-    CRYPTO_DBG("got msg on channel %s \n", chan.c_str());
     impl.on_msg(msg);
 }
 

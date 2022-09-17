@@ -107,7 +107,7 @@ class _lcm_security_ctx {
                 std::string group_keyxchg_channel = "group_keyxchg_channel";
 
                 auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
-                    group_keyxchg_channel, ev_loop, lcm);
+                    group_keyxchg_channel, ev_loop, lcm, params[i].sender_id);
                 lcm.subscribe(group_keyxchg_channel,
                               &lcmsec_impl::Key_Exchange_Manager::handleMessage,
                               keyExchangeManager.get());
@@ -115,7 +115,7 @@ class _lcm_security_ctx {
                                                                       params + i);
             } else {
                 auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
-                    std::string(params[i].channelname), ev_loop, lcm);
+                    std::string(params[i].channelname), ev_loop, lcm, params[i].sender_id);
 
                 std::string keyxch_channel = params[i].channelname;
                 lcm.subscribe(keyxch_channel,
