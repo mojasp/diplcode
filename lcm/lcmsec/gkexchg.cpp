@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <stack>
 #include <vector>
 
@@ -114,20 +115,28 @@ Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lc
 {
 }
 
-void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message& msg) {
+void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
+{
     ecdsa_private dsa_private(uid.u);
     auto signature = dsa_private.db_sign(msg);
 
     msg.sig_size = signature.size();
     msg.sig = std::vector<int8_t>((int8_t *) signature.data(),
-                                         (int8_t *) (signature.data() + msg.sig_size));
+                                  (int8_t *) (signature.data() + msg.sig_size));
     lcm.publish(channelname, &msg);
 }
 
-void Dutta_Barua_GKE::db_set_public_value(Dutta_Barua_message& msg, const Botan::BigInt& bigint){
+void Dutta_Barua_GKE::db_set_public_value(Dutta_Barua_message &msg, const Botan::BigInt &bigint)
+{
+    assert(bigint != 0);
     msg.public_value_size = bigint.bits();
     msg.public_value.resize(bigint.bits());
-    bigint.binary_encode((uint8_t*)(msg.public_value.data()), bigint.bits());
+    bigint.binary_encode((uint8_t *) (msg.public_value.data()), bigint.bits());
+}
+
+void Dutta_Barua_GKE::db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint)
+{
+    bigint.binary_decode((uint8_t *) msg.public_value.data(), msg.public_value.size());
 }
 
 void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
@@ -139,9 +148,11 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
     ecdsa_public dsa_public(msg->u);
     if (!dsa_public.db_verify(msg))
         return;
-    debug("verified signature successfully");
+    // debug("verified signature successfully");
 
     if (msg->round == 1) {
+        // Note: it is intended that in the case of two participants, both of the conditions hold;
+        // i.e. the 2-party case is just a special case of the key exchange algorithm
         if (is_left_neighbour(msg))
             r1_messages.left = *msg;
         if (is_right_neighbour(msg))
@@ -152,7 +163,7 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
                          " failed: faulty message (msg->round) but valid signature";
             throw std::runtime_error(error);
         }
-        r2_messages.push_back(*msg);
+        r2_messages[msg->u] = *msg;
     }
 
     // Check prerequisites for next round
@@ -193,27 +204,34 @@ void Dutta_Barua_GKE::round1()
 
 void Dutta_Barua_GKE::round2()
 {
-    debug(("Channel" + channelname + " : round2()").c_str());
+    assert(r1_messages.left && r1_messages.right);
+    debug("round2");
     auto x_i_value = x_i->get_x();
 
-    auto& msgleft = r1_messages.left;
-    auto& msgright = r1_messages.right;
+    auto &msgleft = r1_messages.left;
+    auto &msgright = r1_messages.right;
 
     Botan::BigInt left_X;
-    left_X.binary_decode((uint8_t*)msgleft->public_value.data(), msgleft->public_value.size());
-    auto leftkey = Botan::power_mod(left_X, x_i_value, x_i->group_p());
+    db_get_public_value(*msgleft, left_X);
+
+    r1_results.left = Botan::power_mod(left_X, x_i_value, x_i->group_p());
 
     Botan::BigInt right_X;
-    right_X.binary_decode((uint8_t*)msgright->public_value.data(), msgright->public_value.size());
-    auto rightkey = Botan::power_mod(right_X, x_i_value, x_i->group_p());
+    db_get_public_value(*msgright, right_X);
+    r1_results.right = Botan::power_mod(right_X, x_i_value, x_i->group_p());
 
-    auto Y = rightkey/leftkey;
+    assert(r1_results.right != 0);
+    assert(r1_results.left != 0);
 
+    auto leftkey_inverse = Botan::inverse_mod(r1_results.left, x_i->group_p());
+    Botan::BigInt Y = (r1_results.right * leftkey_inverse) % x_i->group_p();
+
+    assert(Y != 0);
     Dutta_Barua_message msg;
     msg.u = uid.u;
-    msg.round=2;
+    msg.round = 2;
     db_set_public_value(msg, Y);
-    msg.d=uid.d;
+    msg.d = uid.d;
 
     sign_and_dispatch(msg);
 
@@ -222,14 +240,67 @@ void Dutta_Barua_GKE::round2()
 
 void Dutta_Barua_GKE::computeKey()
 {
-    debug(("Channel " + channelname + " : computeKey()").c_str());
+    debug("computeKey()");
+    for (auto &[i, incoming] : r2_messages) {
+        partial_session_id.push_back({incoming.u, incoming.d});
+    }
+    auto wrapindex = [=](int i) {
+        return ((i - 1) % participants) +
+               1;  // wraparound respecting 1-indexing of dutta barua paper
+    };
+
+    std::map<int, Botan::BigInt> right_keys;
+
+    // we can immediately add our own right key (computed from the previous round)
+    right_keys[uid.u] = Botan::BigInt(r1_results.right);
+
+    Botan::BigInt current_rightkey = r1_results.right;
+
+    Botan::BigInt Y;
+    db_get_public_value(r2_messages[wrapindex(uid.u + 1)], Y);
+
+    current_rightkey = (Y * current_rightkey) % x_i->group_p();
+    right_keys[wrapindex(uid.u + 1)] = Botan::BigInt(current_rightkey);
+
+    for (int i = 2; i <= participants - 1; i++) {
+        int idx = wrapindex(i + uid.u);
+        // debug(("idx: " + std::to_string(idx)).c_str());
+        assert(r2_messages.count(idx) == 1);
+        db_get_public_value(r2_messages[idx], Y);
+        current_rightkey = (Y * current_rightkey) % x_i->group_p();
+
+        right_keys[idx] = Botan::BigInt(current_rightkey);
+    }
+
+    // correctness check
+    int lastindex = wrapindex(uid.u + participants - 1);
+    bool correctness = right_keys[lastindex] == r1_results.left;
+    if (correctness)
+        debug("key computation correctness check passed");
+    else {
+        debug("key computation correctness check failed");
+        return;  // FIXME failure should be signaled in some form is actionable for the consumer of
+                 // the API
+    }
+    session_key =
+        std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
+                        [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
+                            return (acc * value.second) % x_i->group_p();
+    });
+
+    using namespace std;
+    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key << endl;
+    cout << "session key bitsize: "  << session_key->bits() << " bits" << endl;
+
+
+    evloop.channel_finished();
 }
 
 Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
                                            lcm::LCM &lcm, int uid)
     : impl(channelname, ev_loop, lcm, uid)
 {
-    auto r1 = [=] { this->impl.round1(); };
+    auto r1 = [=] { impl.round1(); };
     ev_loop.push_task(r1);
 };
 

@@ -103,7 +103,7 @@ class _lcm_security_ctx {
 
         for (int i = 0; i < param_len; i++) {
             if (params[i].channelname == nullptr) {
-                // FIXME: Group context channelname for key exchange
+                // FIXME: Group key exchange
                 std::string group_keyxchg_channel = "group_keyxchg_channel";
 
                 auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(

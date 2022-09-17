@@ -1,6 +1,10 @@
 #ifndef GKEXCHG_H
 #define GKEXCHG_H
 
+#include <botan/bigint.h>
+#include <botan/dh.h>
+
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -10,8 +14,6 @@
 #include "lcm.h"
 #include "lcmsec/eventloop.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
-#include <botan/bigint.h>
-#include <botan/dh.h>
 
 namespace lcmsec_impl {
 
@@ -32,19 +34,28 @@ class Dutta_Barua_GKE {
         int u, d;
     };
     const user_id uid{1, 1};
-    int participants = 2;  // Number of participants in the protocol
+
+    // stateful members needed across multiple rounds of the keyexchange //
+    int participants = 3; // Number of participants in the protocol
 
     std::vector<user_id> partial_session_id;
-    std::optional<Botan::DH_PrivateKey> x_i; //no default constructor for DH_PrivateKey and it cannot be immediately initialized
+    std::optional<Botan::DH_PrivateKey>
+        x_i;  // no default constructor for DH_PrivateKey and it cannot be immediately initialized
 
-    std::vector<Dutta_Barua_message> r2_messages;
+    std::map<int, Dutta_Barua_message> r2_messages;
     struct {
-        std::optional<Dutta_Barua_message> left;   // from U_{i-1}
-        std::optional<Dutta_Barua_message> right;  // from U_{i+1}
+        std::optional<Dutta_Barua_message> left;   // message from U_{i-1}
+        std::optional<Dutta_Barua_message> right;  // message from U_{i+1}
     } r1_messages;
+
+    struct {
+        Botan::BigInt left;   // K_i^l
+        Botan::BigInt right;  // K_i^r
+    } r1_results;
 
     bool r2_finished = false;
 
+    // ------ Helper methods --------//
     inline bool is_neighbour(const Dutta_Barua_message *msg)
     {
         return is_left_neighbour(msg) || is_right_neighbour(msg);
@@ -62,14 +73,17 @@ class Dutta_Barua_GKE {
         return msg->u == neighbour;
     }
 
-    void sign_and_dispatch(Dutta_Barua_message& msg);
-    static void db_set_public_value(Dutta_Barua_message& msg, const Botan::BigInt& bigint);
+    void sign_and_dispatch(Dutta_Barua_message &msg);
+    static void db_set_public_value(Dutta_Barua_message &msg, const Botan::BigInt &bigint);
+    static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
 
     template <typename T>
     inline void debug(T msg)
     {
-        CRYPTO_DBG("u%i: %s\n", uid.u, msg);
+        CRYPTO_DBG("u%i: ch:%s %s\n", uid.u, channelname.c_str(), msg);
     }
+
+    std::optional<Botan::BigInt> session_key;
 };
 
 /**
@@ -84,10 +98,10 @@ class Key_Exchange_Manager {
                        const Dutta_Barua_message *msg);
 
     /*
-     * deleted copy and move (assignment-)constructors
+     * deleted copy and move constructors
      * This is important since this class will be used as an lcm handler object. Thus, its address
-     * must not not change (which prohibits the move constructor) The semantics for copy
-     * construction would also be extremely unclear as well
+     * must not not change (which prohibits the move constructor).
+     * For the copy constructors, semantics would be unclear, so delete it as well
      */
     Key_Exchange_Manager(Key_Exchange_Manager &&) = delete;
     Key_Exchange_Manager(const Key_Exchange_Manager &) = delete;
