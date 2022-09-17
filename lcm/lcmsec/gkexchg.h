@@ -10,6 +10,8 @@
 #include "lcm.h"
 #include "lcmsec/eventloop.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
+#include <botan/bigint.h>
+#include <botan/dh.h>
 
 namespace lcmsec_impl {
 
@@ -31,7 +33,9 @@ class Dutta_Barua_GKE {
     };
     const user_id uid{1, 1};
     int participants = 2;  // Number of participants in the protocol
+
     std::vector<user_id> partial_session_id;
+    std::optional<Botan::DH_PrivateKey> x_i; //no default constructor for DH_PrivateKey and it cannot be immediately initialized
 
     std::vector<Dutta_Barua_message> r2_messages;
     struct {
@@ -57,6 +61,9 @@ class Dutta_Barua_GKE {
         int neighbour = (uid.u == participants) ? 1 : uid.u + 1;
         return msg->u == neighbour;
     }
+
+    void sign_and_dispatch(Dutta_Barua_message& msg);
+    static void db_set_public_value(Dutta_Barua_message& msg, const Botan::BigInt& bigint);
 
     template <typename T>
     inline void debug(T msg)

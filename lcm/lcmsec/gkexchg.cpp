@@ -32,6 +32,11 @@ class ecdsa_private {
     Botan::AutoSeeded_RNG rng;
     std::unique_ptr<Botan::Private_Key> key;
 
+    std::unique_ptr<Botan::PK_Signer> signer()
+    {
+        return std::make_unique<Botan::PK_Signer>(*key, rng, emca);
+    }
+
   public:
     ecdsa_private(int uid)
     {
@@ -40,9 +45,18 @@ class ecdsa_private {
         std::string filename = "testkeys/user" + std::to_string(uid) + ".priv";
         key = std::unique_ptr<Botan::Private_Key>(Botan::PKCS8::load_key(filename, rng));
     }
-    std::unique_ptr<Botan::PK_Signer> signer()
+
+    std::vector<uint8_t> db_sign(const Dutta_Barua_message &msg)
     {
-        return std::make_unique<Botan::PK_Signer>(*key, rng, emca);
+        Botan::AutoSeeded_RNG rng;
+        auto signer = this->signer();
+
+        signer->update((const uint8_t *) &msg.u, 4);
+        signer->update(msg.round);
+        signer->update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
+        signer->update((const uint8_t *) &msg.d, 4);
+
+        return signer->signature(rng);
     }
 };
 
@@ -51,6 +65,11 @@ class ecdsa_public {
   private:
     Botan::AutoSeeded_RNG rng;
     std::unique_ptr<Botan::Public_Key> key;
+
+    std::unique_ptr<Botan::PK_Verifier> verifier()
+    {
+        return std::make_unique<Botan::PK_Verifier>(*key, emca);
+    }
 
   public:
     ecdsa_public(int uid)
@@ -61,9 +80,15 @@ class ecdsa_public {
         key = std::unique_ptr<Botan::Public_Key>(Botan::X509::load_key(filename));
     }
 
-    std::unique_ptr<Botan::PK_Verifier> verifier()
+    bool db_verify(const Dutta_Barua_message *msg)
     {
-        return std::make_unique<Botan::PK_Verifier>(*key, emca);
+        auto verifier = this->verifier();
+        verifier->update((const uint8_t *) &msg->u, 4);
+        verifier->update(msg->round);
+        verifier->update((const uint8_t *) msg->public_value.data(), msg->public_value.size());
+        verifier->update((const uint8_t *) &msg->d, 4);
+
+        return verifier->check_signature((const uint8_t *) msg->sig.data(), msg->sig_size);
     }
 };
 
@@ -83,64 +108,26 @@ class ecdsa_public {
 //     }
 // }
 
-void Dutta_Barua_GKE::round1()
+Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm,
+                                 int uid)
+    : channelname(std::move(channelname)), evloop(ev_loop), lcm(lcm), uid{uid + 1, 1}
 {
-    debug("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
-    debug("----round 1-----");
+}
 
-    partial_session_id.push_back(uid);  // initialize the partial session id with
-
-    constexpr int group_bitsize = 4096;
-    Botan::DL_Group group("modp/ietf/" + std::to_string(group_bitsize));
-
-    Botan::AutoSeeded_RNG rng;
-
-    Botan::DH_PrivateKey privKey(rng, group);
-
-    // public value; i.e. g^x mod q; where x is private key. This public value is called capital X
-    // in Dutta Barua paper
-    Botan::BigInt X = privKey.get_y();
-
+void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message& msg) {
     ecdsa_private dsa_private(uid.u);
-    auto signer = dsa_private.signer();
-    Dutta_Barua_message r1_message;
+    auto signature = dsa_private.db_sign(msg);
 
-    r1_message.u = this->uid.u;
-    signer->update((const uint8_t *) &r1_message.u, 4);
-
-    r1_message.round = 1;
-    signer->update(r1_message.round);
-
-    r1_message.public_value_size = X.bits();
-    r1_message.public_value.resize(X.bits());
-    signer->update((const uint8_t *) r1_message.public_value.data(),
-                   r1_message.public_value.size());
-
-    r1_message.d = this->uid.d;
-    signer->update((const uint8_t *) &r1_message.d, 4);
-
-    std::vector<uint8_t> signature = signer->signature(rng);
-
-    r1_message.sig_size = signature.size();
-    r1_message.sig = std::vector<int8_t>((int8_t *) signature.data(),
-                                         (int8_t *) (signature.data() + r1_message.sig_size));
-    lcm.publish(channelname, &r1_message);
+    msg.sig_size = signature.size();
+    msg.sig = std::vector<int8_t>((int8_t *) signature.data(),
+                                         (int8_t *) (signature.data() + msg.sig_size));
+    lcm.publish(channelname, &msg);
 }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm, int uid)
-    : channelname(std::move(channelname)), evloop(ev_loop), lcm(lcm), uid{uid+1, 1}
-{
-}
-
-bool verify_db_message(const Dutta_Barua_message *msg, ecdsa_public &dsa_instance)
-{
-    auto verifier = dsa_instance.verifier();
-    verifier->update((const uint8_t *) &msg->u, 4);
-    verifier->update(msg->round);
-    verifier->update((const uint8_t *) msg->public_value.data(), msg->public_value_size);
-    verifier->update((const uint8_t *) &msg->d, 4);
-
-    return verifier->check_signature((const uint8_t *) msg->sig.data(), msg->sig_size);
+void Dutta_Barua_GKE::db_set_public_value(Dutta_Barua_message& msg, const Botan::BigInt& bigint){
+    msg.public_value_size = bigint.bits();
+    msg.public_value.resize(bigint.bits());
+    bigint.binary_encode((uint8_t*)(msg.public_value.data()), bigint.bits());
 }
 
 void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
@@ -150,14 +137,14 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
         return;
 
     ecdsa_public dsa_public(msg->u);
-    if (!verify_db_message(msg, dsa_public))
+    if (!dsa_public.db_verify(msg))
         return;
     debug("verified signature successfully");
 
     if (msg->round == 1) {
         if (is_left_neighbour(msg))
             r1_messages.left = *msg;
-        if(is_right_neighbour(msg))
+        if (is_right_neighbour(msg))
             r1_messages.right = *msg;
     } else {
         if (msg->round != 2) {
@@ -176,14 +163,66 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
         evloop.push_task([this] { computeKey(); });
     }
 }
+void Dutta_Barua_GKE::round1()
+{
+    debug("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
+    debug("----round 1-----");
+
+    partial_session_id.push_back(uid);  // initialize the partial session id with
+
+    constexpr int group_bitsize = 4096;
+    Botan::DL_Group group("modp/ietf/" + std::to_string(group_bitsize));
+
+    Botan::AutoSeeded_RNG rng;
+
+    x_i = Botan::DH_PrivateKey(rng, group);
+
+    // public value; i.e. g^x mod q; where x is private key. This public value is called capital X
+    // in Dutta Barua paper
+    Botan::BigInt X = x_i->get_y();
+
+    Dutta_Barua_message msg;
+
+    msg.u = this->uid.u;
+    msg.round = 1;
+    db_set_public_value(msg, X);
+    msg.d = this->uid.d;
+
+    sign_and_dispatch(msg);
+}
 
 void Dutta_Barua_GKE::round2()
 {
     debug(("Channel" + channelname + " : round2()").c_str());
+    auto x_i_value = x_i->get_x();
+
+    auto& msgleft = r1_messages.left;
+    auto& msgright = r1_messages.right;
+
+    Botan::BigInt left_X;
+    left_X.binary_decode((uint8_t*)msgleft->public_value.data(), msgleft->public_value.size());
+    auto leftkey = Botan::power_mod(left_X, x_i_value, x_i->group_p());
+
+    Botan::BigInt right_X;
+    right_X.binary_decode((uint8_t*)msgright->public_value.data(), msgright->public_value.size());
+    auto rightkey = Botan::power_mod(right_X, x_i_value, x_i->group_p());
+
+    auto Y = rightkey/leftkey;
+
+    Dutta_Barua_message msg;
+    msg.u = uid.u;
+    msg.round=2;
+    db_set_public_value(msg, Y);
+    msg.d=uid.d;
+
+    sign_and_dispatch(msg);
+
+    r2_finished = true;
 }
+
 void Dutta_Barua_GKE::computeKey()
 {
-    debug(("Channel "+channelname+" : computeKey()").c_str());
+    debug(("Channel " + channelname + " : computeKey()").c_str());
 }
 
 Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
