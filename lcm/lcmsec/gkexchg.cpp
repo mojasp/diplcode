@@ -19,6 +19,7 @@
 #include <stack>
 #include <vector>
 
+#include "crypto_wrapper.h"
 #include "lcm-cpp.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
@@ -84,8 +85,8 @@ class ecdsa_public {
 
 void Dutta_Barua_GKE::round1()
 {
-    printf("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
-    printf("----round 1-----\n");
+    CRYPTO_DBG("%s", "Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
+    CRYPTO_DBG("%s", "----round 1-----\n");
 
     partial_session_id.push_back(uid);  // initialize the partial session id with
 
@@ -100,7 +101,7 @@ void Dutta_Barua_GKE::round1()
     // in Dutta Barua paper
     Botan::BigInt X = privKey.get_y();
 
-    printf("X (bigint) needs %lu bytes for storage\n", X.bits());
+    CRYPTO_DBG("X (bigint) needs %lu bytes for storage\n", X.bits());
 
     ecdsa_private dsa_private(uid.u);
     auto signer = dsa_private.signer();
@@ -133,21 +134,60 @@ Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lc
 {
 }
 
-void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
+bool verify_db_message(const Dutta_Barua_message *msg, ecdsa_public &dsa_instance)
 {
-    // Check first whether or not the package is interesting to us
-    if (msg->round == 1 && !is_neighbour(msg->u))
-        return;
-
-    //------- Decode and check signature --------//
-    ecdsa_public dsa_public(msg->u);
-    auto verifier = dsa_public.verifier();
+    auto verifier = dsa_instance.verifier();
     verifier->update((const uint8_t *) &msg->u, 4);
     verifier->update(msg->round);
     verifier->update((const uint8_t *) msg->public_value.data(), msg->public_value_size);
     verifier->update((const uint8_t *) &msg->d, 4);
-    bool success = verifier->check_signature((const uint8_t *) msg->sig.data(), msg->sig_size);
-    printf("verified signature successfully\n");
+
+    return verifier->check_signature((const uint8_t *) msg->sig.data(), msg->sig_size);
+}
+
+void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
+{
+    // Check first whether or not the message is meant for us
+    if (msg->round == 1 && !is_neighbour(msg))
+        return;
+
+    ecdsa_public dsa_public(msg->u);
+    if (!verify_db_message(msg, dsa_public))
+        return;
+    CRYPTO_DBG("%s", "verified signature successfully\n");
+
+    if (msg->round == 1) {
+        if (is_left_neighbour(msg))
+            r1_messages.left = *msg;
+        else {
+            assert(is_right_neighbour(msg));
+            r1_messages.right = *msg;
+        }
+    } else {
+        if (msg->round != 2) {
+            auto error = "keyexchange on channel " + channelname +
+                         " failed: faulty message (msg->round) but valid signature";
+            throw std::runtime_error(error);
+        }
+        r2_messages.push_back(*msg);
+    }
+
+    // Check prerequisites for next round
+    if (!r2_finished && r1_messages.left && r1_messages.right) {
+        evloop.push_task([this] { round2(); });
+    }
+    if (r2_finished && r2_messages.size() == participants) {
+        evloop.push_task([this] { computeKey(); });
+    }
+}
+
+void Dutta_Barua_GKE::round2()
+{
+    CRYPTO_DBG("Channel %s : round2()", channelname.c_str());
+}
+void Dutta_Barua_GKE::computeKey()
+{
+    CRYPTO_DBG("Channel %s : computeKey()", channelname.c_str());
 }
 
 Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
@@ -161,7 +201,7 @@ Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &e
 void Key_Exchange_Manager::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                          const Dutta_Barua_message *msg)
 {
-    printf("got msg on channel %s \n", chan.c_str());
+    CRYPTO_DBG("got msg on channel %s \n", chan.c_str());
     impl.on_msg(msg);
 }
 

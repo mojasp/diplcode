@@ -18,6 +18,8 @@ set(lcm_sources
   lcmsec/gkexchg.cpp
 )
 
+set(CMAKE_CXX_STANDARD 17)
+
 set(lcm_install_headers
   eventlog.h
   lcm.h
