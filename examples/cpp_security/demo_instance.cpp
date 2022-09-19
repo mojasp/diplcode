@@ -166,10 +166,10 @@ int main(int argc, char **argv)
 
         lcm_security_parameters group_params;
         group_params.channelname = nullptr;
-        group_params.algorithm = algorithm.c_str();
-        group_params.key       = key.c_str();
-        group_params.nonce     = nonce.c_str();
-        group_params.sender_id = 0;
+        group_params.algorithm = algorithm.data();
+        group_params.key       = key.data();
+        group_params.nonce     = nonce.data();
+        group_params.sender_id = group1["sender_id"].value<int>().value();
         sec_params.push_back(group_params);
 
         std::list<std::string> storage; //storage for config strings until we call lcm::LCM
@@ -180,16 +180,16 @@ int main(int argc, char **argv)
                 lcm_security_parameters channel_param;
 
                 storage.push_back(channel_config["channelname"].value<std::string>().value());
-                channel_param.channelname = storage.back().c_str();
+                channel_param.channelname = storage.back().data();
 
 
                 storage.push_back(channel_config["channel_key"].value<std::string>().value());
-                channel_param.key = storage.back().c_str();
+                channel_param.key = storage.back().data();
 
                 storage.push_back(channel_config["channel_nonce"].value<std::string>().value());
-                channel_param.nonce = storage.back().c_str();
+                channel_param.nonce = storage.back().data();
 
-                channel_param.algorithm = algorithm.c_str();
+                channel_param.algorithm = algorithm.data();
                 channel_param.sender_id    = channel_config["sender_id"].value<int>().value();
                 sec_params.push_back(channel_param);
             }

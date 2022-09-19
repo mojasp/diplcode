@@ -14,6 +14,7 @@ multicast_url = "udpm://239.255.76.67:7667"
 algorithm     = "AES-128/GCM"
 group_key     = "de6e410eac99b961eafe9f2e72efb573"
 group_nonce   = "3925db3efe38"
+sender_id     = 2
 
 [group.alpha.channel1]
 
