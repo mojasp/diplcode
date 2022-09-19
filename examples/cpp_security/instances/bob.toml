@@ -9,27 +9,21 @@ instance_name = "Bob"
 # LCM configuration url; see https://lcm-proj.github.io/group__LcmC__lcm__t.html#gaf29963ef43edadf45296d5ad82c18d4b
 #example: "udpm://239.255.76.67:7667?ttl=1" . 
 # can be empty for default
-multicast_url = "udpm://239.255.76.67:7667"
-
 algorithm     = "AES-128/GCM"
-group_key     = "de6e410eac99b961eafe9f2e72efb573"
-group_nonce   = "3925db3efe38"
-sender_id     = 1
+multicast_url = "udpm://239.255.76.67:7667"
+privkey       = "x509v3/bob.key"
+cert          = "x509v3/bob.crt"
+root_ca       = "x509v3/root_ca.crt"
+
 
 [group.alpha.channel1]
 
 channelname   = "channel1"
-channel_key   = "8b87a73edb367002bf422905fbd910d4"
-channel_nonce = "38cabb0ee8ee"
 send          = false
 receive       = true
-sender_id     = 1
 
 [group.alpha.channel2]
 
 channelname   = "channel2"
-channel_key   = "a7871a0bd317d15f5e9da840a10590d2"
-channel_nonce = "3925db3efe38"
 send          = false
 receive       = true
-sender_id     = 1

@@ -19,7 +19,8 @@ namespace lcmsec_impl {
 
 class Dutta_Barua_GKE {
   public:
-    Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm, int uid);
+    Dutta_Barua_GKE(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
+                    lcm::LCM &lcm, int uid);
     void round1();
     void round2();
     void computeKey();
@@ -27,7 +28,13 @@ class Dutta_Barua_GKE {
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
 
+    const std::string
+        groupexchg_channelname;  // the channelname used for the management of the keyexchange
+
+    // Not used for publishing, but to check permissions of the certificates on incoming messages
     const std::string channelname;
+    const std::string mcastgroup;
+
   private:
     eventloop &evloop;
     lcm::LCM &lcm;
@@ -38,7 +45,7 @@ class Dutta_Barua_GKE {
     const user_id uid{1, 1};
 
     // stateful members needed across multiple rounds of the keyexchange //
-    int participants = 3; // Number of participants in the protocol
+    int participants = 3;  // Number of participants in the protocol
 
     std::vector<user_id> partial_session_id;
     std::optional<Botan::DH_PrivateKey>
@@ -82,7 +89,7 @@ class Dutta_Barua_GKE {
     template <typename T>
     inline void debug(T msg)
     {
-        CRYPTO_DBG("u%i: ch:%s %s\n", uid.u, channelname.c_str(), msg);
+        CRYPTO_DBG("u%i: ch:%s %s\n", uid.u, groupexchg_channelname.c_str(), msg);
     }
 
     std::optional<Botan::BigInt> shared_secret;
@@ -94,7 +101,8 @@ class Dutta_Barua_GKE {
  */
 class Key_Exchange_Manager {
   public:
-    Key_Exchange_Manager(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm, int uid);
+    Key_Exchange_Manager(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
+                         lcm::LCM &lcm, int uid);
 
     void handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                        const Dutta_Barua_message *msg);
@@ -110,10 +118,11 @@ class Key_Exchange_Manager {
     Key_Exchange_Manager &operator=(const Key_Exchange_Manager &) = delete;
     Key_Exchange_Manager &operator=(const Key_Exchange_Manager &&) = delete;
 
-    inline Botan::secure_vector<uint8_t> get_session_key(size_t key_size) {return impl.get_session_key(key_size);}
-    inline const std::string& channelname() {
-        return impl.channelname;
+    inline Botan::secure_vector<uint8_t> get_session_key(size_t key_size)
+    {
+        return impl.get_session_key(key_size);
     }
+    inline const std::string &channelname() { return impl.groupexchg_channelname; }
     inline ~Key_Exchange_Manager() {}
 
   private:

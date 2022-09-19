@@ -435,50 +435,36 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
             if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].algorithm)))
                 goto error;
 
-            item = PyDict_GetItemString(dict, "channelname");
+            item = PyDict_GetItemString(dict, "certificate");
             if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected channelname field in security parameters");
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'certificate' field in security parameters");
                 goto error;
             }
             tuple = Py_BuildValue("(O)", item);
             if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "z", &(security_params[i].channelname)))
+            if(!PyArg_ParseTuple(tuple, "z", &(security_params[i].certificate)))
                 goto error;
 
             item = PyDict_GetItemString(dict, "key");
             if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected key field in security parameters");
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'keyfile' field in security parameters");
                 goto error;
             }
             tuple = Py_BuildValue("(O)", item);
             if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].key)))
+            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].keyfile)))
                 goto error;
 
             item = PyDict_GetItemString(dict, "nonce");
             if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected nonce field in security parameters");
+                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'root_ca' field in security parameters");
                 goto error;
             }
             tuple = Py_BuildValue("(O)", item);
             if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].nonce)))
+            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].root_ca)))
                 goto error;
 
-            item = PyDict_GetItemString(dict, "sender_id");
-            if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected sender_id field in security parameters");
-                goto error;
-            }
-            if(!item) goto error;
-            tuple = Py_BuildValue("(O)", item);
-            if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "h", &(security_params[i].sender_id)))
-                goto error;
-
-            printf("Test\n");
-
-            printf("Params: algorithm %s chname %s key %s nonce %s sender_id %i\n", security_params[i].algorithm, security_params[i].channelname, security_params[i].key, security_params[i].nonce, security_params[i].sender_id);
         }
 
         lcm_obj->lcm = lcm_create_with_security(url, security_params, sz);

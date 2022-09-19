@@ -25,7 +25,6 @@
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
-using std::cout;
 
 // static void generate_testing_keypairs()
 // {
@@ -43,18 +42,17 @@ using std::cout;
 //     }
 // }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lcm::LCM &lcm,
+Dutta_Barua_GKE::Dutta_Barua_GKE(std::string mcastgroup, std::string channelname, eventloop &ev_loop, lcm::LCM &lcm,
                                  int uid)
-    : channelname(std::move(channelname)), evloop(ev_loop), lcm(lcm), uid{uid + 1, 1}
+    : channelname(channelname), mcastgroup(std::move(mcastgroup)), groupexchg_channelname("lcm://"+ channelname), evloop(ev_loop), lcm(lcm), uid{uid, 1}
 {
 }
 
-void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
+static void botan_x509_example(Dutta_Barua_message &msg)
 {
-    auto &signer = DSA_signer::getInst("x509v3/bob.key");
+    auto &signer = DSA_signer::getInst();
     auto signature = signer.db_sign(msg);
 
-    // test
     std::cout << " verify message for test " << std::endl;
 
     std::string cert_file = "x509v3/bob.crt";
@@ -80,9 +78,10 @@ void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
     if (verifier.check_signature(signature))
         std::cout << "msg signature valid" << std::endl;
     else
-        cout << "msg signature INVALID" << std::endl;
+        std::cout << "msg signature INVALID" << std::endl;
 
-    // check if permissions are good -- skip for now
+    // check if permissions are good
+    std::string channelname = "channel1";
     Botan::AlternativeName altname = cert.subject_alt_name();
     bool found_permission = false;
     std::string expected_urn;
@@ -101,19 +100,25 @@ void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
         if (k != URI)
             continue;
         if (expected_urn == v) {
-            found_permission = true; break;
+            found_permission = true;
+            break;
         }
     }
     if (found_permission)
         std::cout << "permissions exist. msg is good." << std::endl;
     else
-        cout << "did not find permissions ("<< expected_urn << ")for msg in certificate" << std::endl;
-
+        std::cout << "did not find permissions (" << expected_urn << ")for msg in certificate"
+                  << std::endl;
+}
+void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
+{
+    auto &signer = DSA_signer::getInst();
+    auto signature = signer.db_sign(msg);
 
     msg.sig_size = signature.size();
     msg.sig = std::vector<int8_t>((int8_t *) signature.data(),
                                   (int8_t *) (signature.data() + msg.sig_size));
-    lcm.publish(channelname, &msg);
+    lcm.publish(groupexchg_channelname, &msg);
 }
 
 void Dutta_Barua_GKE::db_set_public_value(Dutta_Barua_message &msg, const Botan::BigInt &bigint)
@@ -135,10 +140,11 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
     if (msg->round == 1 && !is_neighbour(msg))
         return;
 
-    DSA_verifier dsa_public(msg->u);
-    if (!dsa_public.db_verify(msg))
+    auto& verifier = DSA_verifier::getInst();
+    if (!verifier.db_verify(msg, mcastgroup, channelname)){
+        debug("signature verification failed");
         return;
-    // debug("verified signature successfully");
+    }
 
     if (msg->round == 1) {
         // Note: it is intended that in the case of two participants, both of the conditions hold;
@@ -149,7 +155,7 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
             r1_messages.right = *msg;
     } else {
         if (msg->round != 2) {
-            auto error = "keyexchange on channel " + channelname +
+            auto error = "keyexchange on channel " + groupexchg_channelname +
                          " failed: faulty message (msg->round) but valid signature";
             throw std::runtime_error(error);
         }
@@ -295,9 +301,9 @@ Botan::secure_vector<uint8_t> Dutta_Barua_GKE::get_session_key(size_t key_size)
     return kdf->derive_key(key_size, encoded);
 }
 
-Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
+Key_Exchange_Manager::Key_Exchange_Manager(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
                                            lcm::LCM &lcm, int uid)
-    : impl(channelname, ev_loop, lcm, uid)
+    : impl(mcastgroup, channelname, ev_loop, lcm, uid)
 {
     auto r1 = [=] { impl.round1(); };
     ev_loop.push_task(r1);

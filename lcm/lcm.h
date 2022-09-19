@@ -194,47 +194,42 @@ lcm_t *lcm_create(const char *provider);
  * Security Parameters for LCM
  */
 typedef struct {
-    /* 
-     * string describing the Cryptographic algorithm and mode of operation used 
+    /*
+     * @brief string describing the Cryptographic algorithm and mode of operation used
      * Possible options are:
          "AES-128/GCM"
      */
-    char* algorithm;
+    char *algorithm;
 
-    /*
-     * channelname that the security parameters are associated with
-     * If NULL, associated them with the group / lcm provider
+    /**
+     * @brief string with the relative path to the public key certificate
      */
-    char* channelname; 
-    /*
-     * symmetric encryption key
-     * hex encoded null terminated string, must be the appropriate length for the symmetric algorithm (i.e. a 16 byte key for AES-128)
-     */
-    char* key;
+    char *certificate;
 
-    /* 
-     * Session nonce
-     * hex encoded null terminated string
-     *      must be 6 bytes
+    /**
+     * @brief corresponding key to certificate
      */
-    char* nonce;
-    
-    /*
-     * sender ID unique to the channel within the multicastgroup
+    char *keyfile;
+
+    /**
+     * @brief string with the relative path to the root certificate used to sign certificate
      */
-    uint16_t sender_id;
+    char *root_ca;
 } lcm_security_parameters;
 
 /*
  * Like lcm_create, but initializing security functionalities
- * If lcm_t is created with this function, subsequent publish and subscribe operations will be secured
- * 
- * sec_params shall be an array of length param_len containing the security parameters for the group and each channel that will be used
+ * If lcm_t is created with this function, subsequent publish and subscribe operations will be
+ * secured
+ *
+ * sec_params shall be an array of length param_len containing the security parameters for the group
+ * and each channel that will be used
  *
  * FIXME: mention document that explains details
  */
 LCM_EXPORT
-lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters* sec_params, size_t param_len);
+lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters *sec_params,
+                                size_t param_len);
 
 /**
  * @brief Destructor

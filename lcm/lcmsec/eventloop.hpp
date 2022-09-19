@@ -77,14 +77,15 @@ class eventloop {
     int unfinished_channels;
 
   public:
-    inline eventloop(lcm::LCM &lcm, int unfinished_channels, int lcm_timeout_ms = 50)
-        : lcm(lcm), unfinished_channels(unfinished_channels), lcm_timeout_ms(lcm_timeout_ms)
+    inline eventloop(lcm::LCM &lcm, int lcm_timeout_ms = 50)
+        : lcm(lcm), lcm_timeout_ms(lcm_timeout_ms)
     {
     }
     inline void push_task(eventloop::task_t task) { tasks.push(task); }
 
-    inline void run()
+    inline void run(int channels_to_configure)
     {
+        unfinished_channels = channels_to_configure;
         while (!tasks.empty() || unfinished_channels > 0) {
             if (!tasks.empty()) {
                 auto t = tasks.front();
@@ -96,7 +97,6 @@ class eventloop {
             }
         }
     }
-
     inline void channel_finished() {unfinished_channels--;}
 };
 
