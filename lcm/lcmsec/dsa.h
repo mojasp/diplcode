@@ -4,6 +4,7 @@
 
 #include <botan/asn1_alt_name.h>
 #include <botan/auto_rng.h>
+#include <botan/ber_dec.h>
 #include <botan/pk_keys.h>
 #include <botan/pkcs8.h>
 #include <botan/pubkey.h>
@@ -15,8 +16,10 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <unordered_map>
 
 #include "lcmsec/crypto_wrapper.h"
+#include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
@@ -117,7 +120,45 @@ class DSA_signer {
     }
 };
 
-// verify using ESMSA1 with SHA-256 over secp521r1
+// Hashing adapted from boost::hash_combine and stackoverflow
+template <class T>
+inline void hash_combine(std::size_t &s, const T &v)
+{
+    std::hash<T> h;
+    s ^= h(v) + 0x9e3779b9 + (s << 6) + (s >> 2);
+}
+
+struct capability {
+    std::string mcasturl;
+    std::optional<std::string> channelname;
+    int uid;
+};
+
+inline bool operator==(const capability &a, const capability &b)
+{
+    return a.mcasturl == b.mcasturl && a.channelname == b.channelname && a.uid == b.uid;
+}
+
+template <class T>
+class MyHash;
+
+template <>
+struct MyHash<capability> {
+    std::size_t operator()(capability const &c) const
+    {
+        std::size_t res = 0;
+        hash_combine(res, c.mcasturl);
+        if (!c.channelname)
+            res += 10;
+        else
+            hash_combine(res, *c.channelname);
+        hash_combine(res, c.channelname);
+        hash_combine(res, c.uid);
+        return res;
+    }
+};
+
+// verify using ESMSA1 with SHA-256
 class DSA_verifier {
   private:
     Botan::AutoSeeded_RNG rng;
@@ -125,35 +166,62 @@ class DSA_verifier {
 
     DSA_verifier(std::string filename) : root_ca(filename) {}
 
+    std::unordered_map<capability, Botan::X509_Certificate, MyHash<capability>> certificate_store;
+
   public:
-    static const DSA_verifier &getInst(std::string root_ca = "")
+    static DSA_verifier &getInst(std::string root_ca = "")
     {
         static DSA_verifier inst(root_ca);
         return inst;
     }
 
+    void add_certificate(const Dutta_Barua_SYN *syn)
+    {
+        Botan::X509_Certificate cert;
+        Botan::BER_Decoder decoder(
+            std::vector<uint8_t>((uint8_t *) syn->x509_certificate_BER.data(),
+                                 (uint8_t *) syn->x509_certificate_BER.data() + syn->cert_size));
+        cert.decode_from(decoder);
+
+        if (!cert.check_signature(root_ca.subject_public_key())) {
+            CRYPTO_DBG("%s", "certificate from SYN INVALID\n");
+            return;
+        }
+
+        auto cap_map = parse_certificate_capabilities(cert);
+        for (auto &[group, channels] : cap_map) {
+            for (auto [channel, uid] : channels) {
+                capability cap{group, channel, uid};
+                certificate_store[cap] =
+                    cert;  // Note that certificates are shared_ptr's under the hood, so this works
+                           // out nicely in terms of fast lookup times - since we store each cert
+                           // "multiple times", but by reference only
+            }
+        }
+    }
+
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
                    std::string channelname) const
     {
-        std::string crt_file = "x509v3/";
-        // quick workaround until SYN is up
-        if (msg->u == 1)
-            crt_file += "alice.crt";
-        else if (msg->u == 2)
-            crt_file += "bob.crt";
-        else if (msg->u == 3)
-            crt_file += "charlie.crt";
-        else
-            throw std::out_of_range("uid out of range [1,3], was " + std::to_string(msg->u));
+        // look for a certificate with the desired capabilities
+        std::optional<std::string> optchannel =
+            (channelname == std::string("239.255.76.67:7667"))
+                ? std::nullopt
+                : std::optional<std::string>(channelname);  // quick hack as workaround for now
 
-        // Check certificate validity
-        Botan::X509_Certificate cert(crt_file);
-        if (!cert.check_signature(root_ca.subject_public_key())) {
-            CRYPTO_DBG("certificate %s INVALID\n", crt_file.c_str());
+        capability desired_cap = {std::move(multicast_group), std::move(optchannel), msg->u};
+        auto cert_iter = certificate_store.find(desired_cap);
+        if (cert_iter == certificate_store.end()) {
+            CRYPTO_DBG(
+                "found no certificate for needed permissions of the incoming message (%s: %s: %i)\n",
+                desired_cap.mcasturl.c_str(), channelname.c_str(), msg->u);
+            std::cout << "sz: " << certificate_store.size() << std::endl;
             return false;
         }
 
-        // Check the actual signature of the message
+        auto cert = cert_iter->second;
+
+        // use cert to check the signature of the message
         auto pkey = cert.subject_public_key();
         Botan::PK_Verifier verifier(*pkey, emca);
 
@@ -163,33 +231,11 @@ class DSA_verifier {
         verifier.update((const uint8_t *) &msg->d, 4);
 
         if (!verifier.check_signature((const uint8_t *) msg->sig.data(), msg->sig_size)) {
-            CRYPTO_DBG("signature check failed for msg from signed by %s\n", crt_file.c_str());
-            return false;
-        }
+            CRYPTO_DBG(
+                "signature check failed for msg from signed by (%s: %s: "
+                "%i)",
+                desired_cap.mcasturl.c_str(), channelname.c_str(), msg->u);
 
-        // check permissions of the certificate
-        const auto capabilities = parse_certificate_capabilities(cert);
-        const auto group = capabilities.find(multicast_group);
-        if (group == capabilities.end()) {
-            CRYPTO_DBG("%s includes no permission to use the multicast_group %s\n",
-                       crt_file.c_str(), multicast_group.c_str());
-            return false;
-        }
-        std::optional<std::string> chkey =
-            (channelname == std::string("239.255.76.67:7667"))
-                ? std::nullopt
-                : std::optional<std::string>(channelname);  // quick hack as workaround for now
-        const auto &channels = group->second;
-        const auto &channel = channels.find(chkey);
-        if (channel == channels.end()) {
-            CRYPTO_DBG("%s includes no permission to use the channel %s in mcastgroup %s\n",
-                       crt_file.c_str(), channelname.c_str(), multicast_group.c_str());
-            return false;
-        }
-        int permitted_uid = channel->second;
-        if (permitted_uid != msg->u) {
-            CRYPTO_DBG("%s includes no permission to use uid %i on channel %s in mcastgroup %s\n",
-                       crt_file.c_str(), msg->u, channelname.c_str(), multicast_group.c_str());
             return false;
         }
 

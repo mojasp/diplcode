@@ -11,6 +11,7 @@
 #include <botan/numthry.h>
 #include <botan/pubkey.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -176,15 +177,61 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
         evloop.push_task([this] { computeKey(); });
     }
 }
-void Dutta_Barua_GKE::SYN()
+
+inline void Dutta_Barua_GKE::SYN()
 {
     Dutta_Barua_SYN syn;
     auto now = std::chrono::high_resolution_clock::now();
-    syn.timestamp = now.time_since_epoch().count();
+    auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
+    syn.timestamp = now_ms.time_since_epoch().count();
+
+    auto &cert = DSA_certificate_self::getInst().cert;
+    auto data = cert.BER_encode();
+    syn.cert_size = data.size();
+    syn.x509_certificate_BER =
+        std::vector<int8_t>((int8_t *) data.data(), (int8_t *) (data.data() + syn.cert_size));
+
+    lcm.publish("syn" + groupexchg_channelname, &syn);
+
+    auto r1 = [=] { round1(); };
+    evloop.push_task(r1);
+}
+
+inline void Dutta_Barua_GKE::onSYN(const Dutta_Barua_SYN *syn_msg)
+{
+    if (!syn_finished_at) {  // no syn has yet been received
+        // check against current time to avoid some sort of DOS attack in which an attack
+        // causes the protocol to never start by setting the timestamp into the future
+        //  NOTE: this is nesecary because the timestamp is not signed
+        auto now = std::chrono::high_resolution_clock::now();
+        auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
+        int count_now = now_ms.time_since_epoch().count();
+        if (syn_msg->timestamp < count_now)
+            syn_finished_at = syn_msg->timestamp + SYN_waitperiod_ms;
+        else
+            syn_finished_at = count_now + SYN_waitperiod_ms;
+    }
+    auto &verifier = DSA_verifier::getInst();
+    verifier.add_certificate(syn_msg);
 }
 
 void Dutta_Barua_GKE::round1()
 {
+    // if we are too early, push this task to the back of the eventloop and return
+    if (!syn_finished_at) {
+        evloop.push_task([this]() { round1(); });
+        return;
+    }
+    if (syn_finished_at) {
+        auto now = std::chrono::high_resolution_clock::now();
+        auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
+        auto count = now_ms.time_since_epoch().count();
+        if (count < *syn_finished_at) {
+            evloop.push_task([this]() { round1(); });
+            return;
+        }
+    }
+
     debug("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
     debug("----round 1-----");
 
@@ -197,8 +244,8 @@ void Dutta_Barua_GKE::round1()
 
     x_i = Botan::DH_PrivateKey(rng, group);
 
-    // public value; i.e. g^x mod q; where x is private key. This public value is called capital X
-    // in Dutta Barua paper
+    // public value; i.e. g^x mod q; where x is private key. This public value is called
+    // capital X in Dutta Barua paper
     Botan::BigInt X = x_i->get_y();
 
     Dutta_Barua_message msg;
@@ -249,7 +296,7 @@ void Dutta_Barua_GKE::round2()
 
 void Dutta_Barua_GKE::computeKey()
 {
-    debug("computeKey()");
+    // debug("computeKey()");
     for (auto &[i, incoming] : r2_messages) {
         partial_session_id.push_back({incoming.u, incoming.d});
     }
@@ -288,8 +335,8 @@ void Dutta_Barua_GKE::computeKey()
         debug("key computation correctness check passed");
     else {
         debug("key computation correctness check failed");
-        return;  // FIXME failure should be signaled in some form is actionable for the consumer of
-                 // the API
+        return;  // FIXME failure should be signaled in some form is actionable for the
+                 // consumer of the API
     }
     shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
                                     [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
@@ -297,7 +344,8 @@ void Dutta_Barua_GKE::computeKey()
                                     });
 
     using namespace std;
-    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key << endl;
+    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
+    // endl;
     cout << "session key bitsize: " << shared_secret->bits() << " bits" << endl;
 
     evloop.channel_finished();
@@ -318,14 +366,20 @@ Key_Exchange_Manager::Key_Exchange_Manager(std::string mcastgroup, std::string c
                                            eventloop &ev_loop, lcm::LCM &lcm, int uid)
     : impl(mcastgroup, channelname, ev_loop, lcm, uid)
 {
-    auto r1 = [=] { impl.round1(); };
-    ev_loop.push_task(r1);
+    auto r2 = [=] { impl.SYN(); };
+    ev_loop.push_task(r2);
 };
 
 void Key_Exchange_Manager::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                          const Dutta_Barua_message *msg)
 {
     impl.on_msg(msg);
+}
+
+void Key_Exchange_Manager::handle_SYN(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                                      const Dutta_Barua_SYN *syn_msg)
+{
+    impl.onSYN(syn_msg);
 }
 
 }  // namespace lcmsec_impl

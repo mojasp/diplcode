@@ -139,6 +139,9 @@ class _lcm_security_ctx {
                     lcm.subscribe("lcm://"+ group_keyxchg_channel,
                                   &lcmsec_impl::Key_Exchange_Manager::handleMessage,
                                   keyExchangeManager.get());
+                    lcm.subscribe("synlcm://"+ group_keyxchg_channel,
+                                  &lcmsec_impl::Key_Exchange_Manager::handle_SYN,
+                                  keyExchangeManager.get());
                     group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(
                         std::move(keyExchangeManager), uid, "AES-128/GCM");
                 } else {
@@ -146,6 +149,9 @@ class _lcm_security_ctx {
                         group, channel.value(), ev_loop, lcm, uid);
                     lcm.subscribe("lcm://" + channel.value(),
                                   &lcmsec_impl::Key_Exchange_Manager::handleMessage,
+                                  keyExchangeManager.get());
+                    lcm.subscribe("synlcm://" + channel.value(),
+                                  &lcmsec_impl::Key_Exchange_Manager::handle_SYN,
                                   keyExchangeManager.get());
                     channel_ctx_map[strndup(channel.value().c_str(), LCM_MAX_CHANNEL_NAME_LENGTH)] =
                         std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),

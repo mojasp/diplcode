@@ -11,8 +11,10 @@
 #include <vector>
 
 #include "crypto_wrapper.h"
+#include "dsa.h"
 #include "lcm.h"
 #include "lcmsec/eventloop.hpp"
+#include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
@@ -21,7 +23,10 @@ class Dutta_Barua_GKE {
   public:
     Dutta_Barua_GKE(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
                     lcm::LCM &lcm, int uid);
-    void SYN();
+
+    inline void SYN();
+    inline void onSYN(const Dutta_Barua_SYN *syn_msg);
+
     void round1();
     void round2();
     void computeKey();
@@ -33,8 +38,10 @@ class Dutta_Barua_GKE {
         groupexchg_channelname;  // the channelname used for the management of the keyexchange
 
     // Not used for publishing, but to check permissions of the certificates on incoming messages
-    const std::string channelname;
-    const std::string mcastgroup;
+    const std::string channelname; const std::string mcastgroup;
+
+    const int SYN_waitperiod_ms = 1200;
+    std::optional<int> syn_finished_at;
 
   private:
     eventloop &evloop;
@@ -108,6 +115,8 @@ class Key_Exchange_Manager {
     void handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                        const Dutta_Barua_message *msg);
 
+    void handle_SYN(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                    const Dutta_Barua_SYN *syn_msg);
     /*
      * deleted copy and move constructors
      * This is important since this class will be used as an lcm handler object. Thus, its address
