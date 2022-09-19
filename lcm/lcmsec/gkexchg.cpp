@@ -7,11 +7,9 @@
 #include <botan/ec_group.h>
 #include <botan/ecdsa.h>
 #include <botan/hex.h>
-#include <botan/numthry.h>
-#include <botan/pkcs8.h>
-#include <botan/pubkey.h>
-#include <botan/x509_key.h>
 #include <botan/kdf.h>
+#include <botan/numthry.h>
+#include <botan/pubkey.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -23,76 +21,11 @@
 
 #include "crypto_wrapper.h"
 #include "lcm-cpp.hpp"
+#include "lcmsec/dsa.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
-
-const static std::string emca = "EMSA1(SHA-256)";
-// sign using ESMSA1 with SHA-256 over secp521r1
-class ecdsa_private {
-  private:
-    Botan::AutoSeeded_RNG rng;
-    std::unique_ptr<Botan::Private_Key> key;
-
-    std::unique_ptr<Botan::PK_Signer> signer()
-    {
-        return std::make_unique<Botan::PK_Signer>(*key, rng, emca);
-    }
-
-  public:
-    ecdsa_private(int uid)
-    {
-        if (uid > 4 || uid <= 0)
-            throw std::out_of_range("uid out of range [1,4], was " + std::to_string(uid));
-        std::string filename = "testkeys/user" + std::to_string(uid) + ".priv";
-        key = std::unique_ptr<Botan::Private_Key>(Botan::PKCS8::load_key(filename, rng));
-    }
-
-    std::vector<uint8_t> db_sign(const Dutta_Barua_message &msg)
-    {
-        Botan::AutoSeeded_RNG rng;
-        auto signer = this->signer();
-
-        signer->update((const uint8_t *) &msg.u, 4);
-        signer->update(msg.round);
-        signer->update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
-        signer->update((const uint8_t *) &msg.d, 4);
-
-        return signer->signature(rng);
-    }
-};
-
-// verify using ESMSA1 with SHA-256 over secp521r1
-class ecdsa_public {
-  private:
-    Botan::AutoSeeded_RNG rng;
-    std::unique_ptr<Botan::Public_Key> key;
-
-    std::unique_ptr<Botan::PK_Verifier> verifier()
-    {
-        return std::make_unique<Botan::PK_Verifier>(*key, emca);
-    }
-
-  public:
-    ecdsa_public(int uid)
-    {
-        if (uid > 4 || uid <= 0)
-            throw std::out_of_range("uid out of range [1,4], was " + std::to_string(uid));
-        std::string filename = "testkeys/user" + std::to_string(uid) + ".pub";
-        key = std::unique_ptr<Botan::Public_Key>(Botan::X509::load_key(filename));
-    }
-
-    bool db_verify(const Dutta_Barua_message *msg)
-    {
-        auto verifier = this->verifier();
-        verifier->update((const uint8_t *) &msg->u, 4);
-        verifier->update(msg->round);
-        verifier->update((const uint8_t *) msg->public_value.data(), msg->public_value.size());
-        verifier->update((const uint8_t *) &msg->d, 4);
-
-        return verifier->check_signature((const uint8_t *) msg->sig.data(), msg->sig_size);
-    }
-};
+using std::cout;
 
 // static void generate_testing_keypairs()
 // {
@@ -118,8 +51,64 @@ Dutta_Barua_GKE::Dutta_Barua_GKE(std::string channelname, eventloop &ev_loop, lc
 
 void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
 {
-    ecdsa_private dsa_private(uid.u);
-    auto signature = dsa_private.db_sign(msg);
+    auto &signer = DSA_signer::getInst("x509v3/bob.key");
+    auto signature = signer.db_sign(msg);
+
+    // test
+    std::cout << " verify message for test " << std::endl;
+
+    std::string cert_file = "x509v3/bob.crt";
+    std::string rootcert = "x509v3/root_ca.crt";
+
+    Botan::X509_Certificate cert(cert_file);
+    Botan::X509_Certificate root_ca(rootcert);
+
+    if (cert.check_signature(root_ca.subject_public_key()))
+        std::cout << "certificate valid\n";
+    else
+        std::cout << "certificate INVALID\n";
+
+    // Certificate is valid => check if the message is signed by that certificate
+    auto pkey = cert.subject_public_key();
+    std::cout << "algname" << pkey->algo_name() << std::endl;
+    Botan::PK_Verifier verifier(*pkey, emca);
+    verifier.update((const uint8_t *) &msg.u, 4);
+    verifier.update(msg.round);
+    verifier.update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
+    verifier.update((const uint8_t *) &msg.d, 4);
+
+    if (verifier.check_signature(signature))
+        std::cout << "msg signature valid" << std::endl;
+    else
+        cout << "msg signature INVALID" << std::endl;
+
+    // check if permissions are good -- skip for now
+    Botan::AlternativeName altname = cert.subject_alt_name();
+    bool found_permission = false;
+    std::string expected_urn;
+    std::string group_keyxchg_channel = "group_keyxchg_channel";  // workaround for now
+    std::string mcasturl = "239.255.76.67:7667";  // another workaround, only default url
+    // (=mcastgroup) allowed right now
+    if (channelname == group_keyxchg_channel) {
+        std::string expected_urn = "urn:lcmsec:gkexchg:" + mcasturl + channelname + ":2";
+    } else {
+        expected_urn = "urn:lcmsec:gkexchg_g:" + mcasturl +
+                       ":2";  // Workaround: get uid/senderid from certificate
+    }
+    for (const auto &[k, v] : altname.get_attributes()) {
+        std::cout << k << ": " << v << std::endl;
+        std::string URI = "URI";
+        if (k != URI)
+            continue;
+        if (expected_urn == v) {
+            found_permission = true; break;
+        }
+    }
+    if (found_permission)
+        std::cout << "permissions exist. msg is good." << std::endl;
+    else
+        cout << "did not find permissions ("<< expected_urn << ")for msg in certificate" << std::endl;
+
 
     msg.sig_size = signature.size();
     msg.sig = std::vector<int8_t>((int8_t *) signature.data(),
@@ -146,7 +135,7 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
     if (msg->round == 1 && !is_neighbour(msg))
         return;
 
-    ecdsa_public dsa_public(msg->u);
+    DSA_verifier dsa_public(msg->u);
     if (!dsa_public.db_verify(msg))
         return;
     // debug("verified signature successfully");
@@ -294,9 +283,12 @@ void Dutta_Barua_GKE::computeKey()
 
     evloop.channel_finished();
 }
-Botan::secure_vector<uint8_t> Dutta_Barua_GKE::get_session_key(size_t key_size) {
-    if(!shared_secret)
-        throw std::runtime_error("get_session_key(): No shared secret has been agreed upon. Maybe the group key exchange algorithm was not successful");
+Botan::secure_vector<uint8_t> Dutta_Barua_GKE::get_session_key(size_t key_size)
+{
+    if (!shared_secret)
+        throw std::runtime_error(
+            "get_session_key(): No shared secret has been agreed upon. Maybe the group key "
+            "exchange algorithm was not successful");
     auto kdf = Botan::get_kdf("KDF2(SHA-256)");
     auto encoded = Botan::BigInt::encode_locked(*shared_secret);
 

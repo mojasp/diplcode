@@ -32,7 +32,7 @@ class crypto_ctx {
 
     const Botan::secure_vector<uint8_t> salt;  // FIXME: think about the salt
     const uint16_t sender_id;
-    std::optional<const Botan::secure_vector<uint8_t>> key; //cache the key derivation and store in optional
+    std::optional<const Botan::secure_vector<uint8_t>> key; //caching the key derivation to improve performance. This needs to be done in the manager class when/if we want rekeying
 
     static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
     static constexpr int KEY_SIZE = 16; //AES-128 key size. 
