@@ -28,19 +28,20 @@ class crypto_ctx {
   public:
     const std::string algorithm;
 
-    const Botan::secure_vector<uint8_t> salt;
-    const uint16_t sender_id;
-    const Botan::secure_vector<uint8_t> key;
-    const int TAG_SIZE = LCMCRYPTO_TAGSIZE;
-
     std::unique_ptr<Key_Exchange_Manager> keyExchangeManager;
 
+    const Botan::secure_vector<uint8_t> salt;  // FIXME: think about the salt
+    const uint16_t sender_id;
+    std::optional<const Botan::secure_vector<uint8_t>> key; //cache the key derivation and store in optional
+
+    static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
+    static constexpr int KEY_SIZE = 16; //AES-128 key size. 
+
     explicit crypto_ctx(std::unique_ptr<Key_Exchange_Manager> mgr, lcm_security_parameters *params)
-        : algorithm(params->algorithm),
+        : keyExchangeManager(std::move(mgr)),
+          algorithm(params->algorithm),
           sender_id(params->sender_id),
-          salt(Botan::hex_decode_locked(params->nonce)),
-          key(Botan::hex_decode_locked(params->key)),
-          keyExchangeManager(std::move(mgr))
+          salt(Botan::hex_decode_locked(params->nonce))
     {
         IV.resize(LCMCRYPTO_IVSIZE);
     }
@@ -66,7 +67,12 @@ class crypto_ctx {
     template <typename Cipher>
     void set_cipher_key(Cipher &cipher)
     {
-        cipher.set_key(&key[0], key.size());
+        if(!key)
+            key.emplace(keyExchangeManager->get_session_key(KEY_SIZE));
+
+        //std::cout << "ch: " << keyExchangeManager->channelname() << "key: " << Botan::hex_encode(*key) << std::endl;
+
+        cipher.set_key(&(key->operator[](0)), key->size());
     }
 
     Botan::secure_vector<uint8_t>
@@ -103,9 +109,7 @@ class _lcm_security_ctx {
 
         for (int i = 0; i < param_len; i++) {
             if (params[i].channelname == nullptr) {
-                // FIXME: Group key exchange
                 std::string group_keyxchg_channel = "group_keyxchg_channel";
-
                 auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
                     group_keyxchg_channel, ev_loop, lcm, params[i].sender_id);
                 lcm.subscribe(group_keyxchg_channel,
@@ -118,8 +122,7 @@ class _lcm_security_ctx {
                     std::string(params[i].channelname), ev_loop, lcm, params[i].sender_id);
 
                 std::string keyxch_channel = params[i].channelname;
-                lcm.subscribe(keyxch_channel,
-                              &lcmsec_impl::Key_Exchange_Manager::handleMessage,
+                lcm.subscribe(keyxch_channel, &lcmsec_impl::Key_Exchange_Manager::handleMessage,
                               keyExchangeManager.get());
                 channel_ctx_map[strndup(params[i].channelname, LCM_MAX_CHANNEL_NAME_LENGTH)] =
                     std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),

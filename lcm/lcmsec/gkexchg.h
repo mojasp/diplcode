@@ -25,8 +25,10 @@ class Dutta_Barua_GKE {
     void computeKey();
     void on_msg(const Dutta_Barua_message *msg);
 
+    Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
+
+    const std::string channelname;
   private:
-    std::string channelname;
     eventloop &evloop;
     lcm::LCM &lcm;
 
@@ -83,7 +85,7 @@ class Dutta_Barua_GKE {
         CRYPTO_DBG("u%i: ch:%s %s\n", uid.u, channelname.c_str(), msg);
     }
 
-    std::optional<Botan::BigInt> session_key;
+    std::optional<Botan::BigInt> shared_secret;
 };
 
 /**
@@ -107,6 +109,11 @@ class Key_Exchange_Manager {
     Key_Exchange_Manager(const Key_Exchange_Manager &) = delete;
     Key_Exchange_Manager &operator=(const Key_Exchange_Manager &) = delete;
     Key_Exchange_Manager &operator=(const Key_Exchange_Manager &&) = delete;
+
+    inline Botan::secure_vector<uint8_t> get_session_key(size_t key_size) {return impl.get_session_key(key_size);}
+    inline const std::string& channelname() {
+        return impl.channelname;
+    }
     inline ~Key_Exchange_Manager() {}
 
   private:

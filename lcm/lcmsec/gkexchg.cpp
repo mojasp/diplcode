@@ -11,6 +11,7 @@
 #include <botan/pkcs8.h>
 #include <botan/pubkey.h>
 #include <botan/x509_key.h>
+#include <botan/kdf.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -282,18 +283,24 @@ void Dutta_Barua_GKE::computeKey()
         return;  // FIXME failure should be signaled in some form is actionable for the consumer of
                  // the API
     }
-    session_key =
-        std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
-                        [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
-                            return (acc * value.second) % x_i->group_p();
-    });
+    shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
+                                    [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
+                                        return (acc * value.second) % x_i->group_p();
+                                    });
 
     using namespace std;
     // cout << channelname << " u: " << uid.u << "computed session key: " << session_key << endl;
-    cout << "session key bitsize: "  << session_key->bits() << " bits" << endl;
-
+    cout << "session key bitsize: " << shared_secret->bits() << " bits" << endl;
 
     evloop.channel_finished();
+}
+Botan::secure_vector<uint8_t> Dutta_Barua_GKE::get_session_key(size_t key_size) {
+    if(!shared_secret)
+        throw std::runtime_error("get_session_key(): No shared secret has been agreed upon. Maybe the group key exchange algorithm was not successful");
+    auto kdf = Botan::get_kdf("KDF2(SHA-256)");
+    auto encoded = Botan::BigInt::encode_locked(*shared_secret);
+
+    return kdf->derive_key(key_size, encoded);
 }
 
 Key_Exchange_Manager::Key_Exchange_Manager(std::string channelname, eventloop &ev_loop,
