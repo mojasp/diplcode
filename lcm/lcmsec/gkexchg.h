@@ -21,6 +21,7 @@ class Dutta_Barua_GKE {
   public:
     Dutta_Barua_GKE(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
                     lcm::LCM &lcm, int uid);
+    void SYN();
     void round1();
     void round2();
     void computeKey();

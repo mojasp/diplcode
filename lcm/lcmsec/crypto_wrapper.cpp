@@ -107,11 +107,16 @@ class _lcm_security_ctx {
   public:
     _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
     {
-        // Parse our own certificate file to register the proper channel
+        auto &param = *params;
+
+        //Usage of constant singleton classes to get global access to the private key and certificates
+        lcmsec_impl::DSA_signer::getInst(param.keyfile);
+        lcmsec_impl::DSA_verifier::getInst(param.root_ca);
+        lcmsec_impl::DSA_certificate_self::getInst(param.certificate);
+
+        // Parse our own certificate file to register the proper channels
         //  NOTE: it is probably a good idea to eventually register the channels in a lazy way (upon
         //  subscribe or join()?) - or give the user a choice which channels shall be registered
-
-        auto &param = *params;
         std::string cert_file = param.certificate;
         Botan::X509_Certificate cert(cert_file);  // FIXME: params not as array
         auto capabilities = lcmsec_impl::parse_certificate_capabilities(cert);
@@ -119,9 +124,9 @@ class _lcm_security_ctx {
         lcm::LCM lcm;  // FIXME use nondefault instance (respecting initialization parameters)
 
         lcmsec_impl::eventloop ev_loop(lcm);
-        int channels{0};
+        int channels{0}; //count channels that we have to configure -- needed for eventloop
 
-        // Setup group key exchange and for the channels for which we have capabilities
+        // Setup group key exchange for the channels for which we have capabilities
         for (auto &[group, m] : capabilities) {
             for (auto &[channel, uid] : m) {
                 channels++;
@@ -149,9 +154,6 @@ class _lcm_security_ctx {
             }
         }
 
-        //Initialize signer with our key; verifier with the root ca
-        lcmsec_impl::DSA_signer::getInst(param.keyfile);
-        lcmsec_impl::DSA_verifier::getInst(param.root_ca);
 
         ev_loop.run(channels);
     }

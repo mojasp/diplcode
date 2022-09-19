@@ -22,6 +22,7 @@
 #include "crypto_wrapper.h"
 #include "lcm-cpp.hpp"
 #include "lcmsec/dsa.h"
+#include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
@@ -42,9 +43,14 @@ namespace lcmsec_impl {
 //     }
 // }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(std::string mcastgroup, std::string channelname, eventloop &ev_loop, lcm::LCM &lcm,
-                                 int uid)
-    : channelname(channelname), mcastgroup(std::move(mcastgroup)), groupexchg_channelname("lcm://"+ channelname), evloop(ev_loop), lcm(lcm), uid{uid, 1}
+Dutta_Barua_GKE::Dutta_Barua_GKE(std::string mcastgroup, std::string channelname,
+                                 eventloop &ev_loop, lcm::LCM &lcm, int uid)
+    : channelname(channelname),
+      mcastgroup(std::move(mcastgroup)),
+      groupexchg_channelname("lcm://" + channelname),
+      evloop(ev_loop),
+      lcm(lcm),
+      uid{uid, 1}
 {
 }
 
@@ -140,8 +146,8 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
     if (msg->round == 1 && !is_neighbour(msg))
         return;
 
-    auto& verifier = DSA_verifier::getInst();
-    if (!verifier.db_verify(msg, mcastgroup, channelname)){
+    auto &verifier = DSA_verifier::getInst();
+    if (!verifier.db_verify(msg, mcastgroup, channelname)) {
         debug("signature verification failed");
         return;
     }
@@ -170,6 +176,13 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
         evloop.push_task([this] { computeKey(); });
     }
 }
+void Dutta_Barua_GKE::SYN()
+{
+    Dutta_Barua_SYN syn;
+    auto now = std::chrono::high_resolution_clock::now();
+    syn.timestamp = now.time_since_epoch().count();
+}
+
 void Dutta_Barua_GKE::round1()
 {
     debug("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
@@ -301,8 +314,8 @@ Botan::secure_vector<uint8_t> Dutta_Barua_GKE::get_session_key(size_t key_size)
     return kdf->derive_key(key_size, encoded);
 }
 
-Key_Exchange_Manager::Key_Exchange_Manager(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
-                                           lcm::LCM &lcm, int uid)
+Key_Exchange_Manager::Key_Exchange_Manager(std::string mcastgroup, std::string channelname,
+                                           eventloop &ev_loop, lcm::LCM &lcm, int uid)
     : impl(mcastgroup, channelname, ev_loop, lcm, uid)
 {
     auto r1 = [=] { impl.round1(); };

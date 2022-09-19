@@ -89,18 +89,11 @@ const static std::string emca = "EMSA1(SHA-256)";
 class DSA_signer {
   private:
     Botan::AutoSeeded_RNG rng;
-    std::unique_ptr<Botan::Private_Key> key;
-
-    std::unique_ptr<Botan::PK_Signer> signer()
-    {
-        key->pkcs8_algorithm_identifier();
-
-        return std::make_unique<Botan::PK_Signer>(*key, rng, emca);
-    }
+    const std::unique_ptr<const Botan::Private_Key> key;
 
     explicit DSA_signer(std::string keyfile)
+        : key(std::unique_ptr<Botan::Private_Key>(Botan::PKCS8::load_key(keyfile, rng, "pwd")))
     {
-        key = std::unique_ptr<Botan::Private_Key>(Botan::PKCS8::load_key(keyfile, rng, "pwd"));
     }
 
   public:
@@ -110,17 +103,17 @@ class DSA_signer {
         return inst;
     }
 
-    std::vector<uint8_t> db_sign(const Dutta_Barua_message &msg)
+    std::vector<uint8_t> db_sign(const Dutta_Barua_message &msg) const
     {
         Botan::AutoSeeded_RNG rng;
-        auto signer = this->signer();
+        auto signer = Botan::PK_Signer(*key, rng, emca);
 
-        signer->update((const uint8_t *) &msg.u, 4);
-        signer->update(msg.round);
-        signer->update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
-        signer->update((const uint8_t *) &msg.d, 4);
+        signer.update((const uint8_t *) &msg.u, 4);
+        signer.update(msg.round);
+        signer.update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
+        signer.update((const uint8_t *) &msg.d, 4);
 
-        return signer->signature(rng);
+        return signer.signature(rng);
     }
 };
 
@@ -128,26 +121,19 @@ class DSA_signer {
 class DSA_verifier {
   private:
     Botan::AutoSeeded_RNG rng;
-    std::unique_ptr<Botan::Public_Key> key;
-
-    std::unique_ptr<Botan::PK_Verifier> verifier()
-    {
-        return std::make_unique<Botan::PK_Verifier>(*key, emca);
-    }
-
-    Botan::X509_Certificate root_ca;
+    const Botan::X509_Certificate root_ca;
 
     DSA_verifier(std::string filename) : root_ca(filename) {}
 
   public:
-    static DSA_verifier &getInst(std::string root_ca = "")
+    static const DSA_verifier &getInst(std::string root_ca = "")
     {
         static DSA_verifier inst(root_ca);
         return inst;
     }
 
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
-                   std::string channelname)
+                   std::string channelname) const
     {
         std::string crt_file = "x509v3/";
         // quick workaround until SYN is up
@@ -182,7 +168,6 @@ class DSA_verifier {
         }
 
         // check permissions of the certificate
-
         const auto capabilities = parse_certificate_capabilities(cert);
         const auto group = capabilities.find(multicast_group);
         if (group == capabilities.end()) {
@@ -197,20 +182,35 @@ class DSA_verifier {
         const auto &channels = group->second;
         const auto &channel = channels.find(chkey);
         if (channel == channels.end()) {
-            CRYPTO_DBG("%s includes no permission to use the channel %s in mcastgroup %s\n", crt_file.c_str(),
-                       channelname.c_str(), multicast_group.c_str());
+            CRYPTO_DBG("%s includes no permission to use the channel %s in mcastgroup %s\n",
+                       crt_file.c_str(), channelname.c_str(), multicast_group.c_str());
             return false;
         }
         int permitted_uid = channel->second;
         if (permitted_uid != msg->u) {
-            CRYPTO_DBG("%s includes no permission to use uid %i on channel %s in mcastgroup %s\n", crt_file.c_str(), msg->u,
-                       channelname.c_str(), multicast_group.c_str());
+            CRYPTO_DBG("%s includes no permission to use uid %i on channel %s in mcastgroup %s\n",
+                       crt_file.c_str(), msg->u, channelname.c_str(), multicast_group.c_str());
             return false;
         }
 
         return true;
     }
 };
+/**
+ * @class dsa_certificate_self
+ * @brief singleton class that holds the own certificate
+ */
+class DSA_certificate_self {
+    DSA_certificate_self(std::string certificate_filename) : cert(certificate_filename) {}
 
+  public:
+    static const DSA_certificate_self &getInst(std::string certificate_filename = "")
+    {
+        static DSA_certificate_self inst(certificate_filename);
+        return inst;
+    }
+
+    const Botan::X509_Certificate cert;
+};
 }  // namespace lcmsec_impl
 #endif /* end of include guard: DSA_H */
