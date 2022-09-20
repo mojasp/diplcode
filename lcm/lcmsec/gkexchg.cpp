@@ -215,6 +215,7 @@ inline void Dutta_Barua_GKE::onSYN(const Dutta_Barua_SYN *syn_msg)
     }
     auto &verifier = DSA_verifier::getInst();
     verifier.add_certificate(syn_msg);
+
 }
 
 void Dutta_Barua_GKE::round1()
@@ -234,9 +235,10 @@ void Dutta_Barua_GKE::round1()
         }
     }
 
-    debug("Dutta_Barua_GKE::Dutta_Barua_GKE()\n");
-    debug("----round 1-----");
+    auto &verifier = DSA_verifier::getInst();
+    participants = verifier.count_participants(mcastgroup, channelname);
 
+    debug(("Dutta_Barua_GKE::starting with ()"+std::to_string(participants)+"participants").c_str());
     partial_session_id.push_back(uid);  // initialize the partial session id with
 
     constexpr int group_bitsize = 4096;

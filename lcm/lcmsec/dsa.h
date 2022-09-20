@@ -200,6 +200,21 @@ class DSA_verifier {
         }
     }
 
+    int count_participants(std::string multicast_group, std::string channelname) const
+    {
+        std::cout << channelname << std::endl;
+        std::optional<std::string> optchannel =
+            (channelname == std::string("239.255.76.67:7667"))
+                ? std::nullopt
+                : std::optional<std::string>(channelname);  // quick hack as workaround for now
+
+        int count = 0; //count ourselves as well
+        for (auto& cap : certificate_store) {
+            if(cap.first.channelname == optchannel && (cap.first.channelname == channelname || (!cap.first.channelname && !optchannel))) count++;
+        }
+        return count;
+    }
+
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
                    std::string channelname) const
     {
@@ -213,7 +228,8 @@ class DSA_verifier {
         auto cert_iter = certificate_store.find(desired_cap);
         if (cert_iter == certificate_store.end()) {
             CRYPTO_DBG(
-                "found no certificate for needed permissions of the incoming message (%s: %s: %i)\n",
+                "found no certificate for needed permissions of the incoming message (%s: %s: "
+                "%i)\n",
                 desired_cap.mcasturl.c_str(), channelname.c_str(), msg->u);
             std::cout << "sz: " << certificate_store.size() << std::endl;
             return false;
