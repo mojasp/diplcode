@@ -14,7 +14,7 @@ struct Dutta_Barua_message
 
 struct Dutta_Barua_SYN
 {
-    int32_t timestamp;
+    int64_t timestamp_milli;
     int32_t cert_size;
     int8_t x509_certificate_BER[cert_size];
 }

@@ -183,7 +183,7 @@ inline void Dutta_Barua_GKE::SYN()
     Dutta_Barua_SYN syn;
     auto now = std::chrono::high_resolution_clock::now();
     auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
-    syn.timestamp = now_ms.time_since_epoch().count();
+    syn.timestamp_milli = now_ms.time_since_epoch().count();
 
     auto &cert = DSA_certificate_self::getInst().cert;
     auto data = cert.BER_encode();
@@ -206,10 +206,12 @@ inline void Dutta_Barua_GKE::onSYN(const Dutta_Barua_SYN *syn_msg)
         auto now = std::chrono::high_resolution_clock::now();
         auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
         int count_now = now_ms.time_since_epoch().count();
-        if (syn_msg->timestamp < count_now)
-            syn_finished_at = syn_msg->timestamp + SYN_waitperiod_ms;
-        else
-            syn_finished_at = count_now + SYN_waitperiod_ms;
+        if (syn_msg->timestamp_milli < count_now + SYN_waitperiod_ms) {
+            syn_finished_at = syn_msg->timestamp_milli + SYN_waitperiod_ms;
+            assert(false);
+        } else {
+            syn_finished_at = syn_msg->timestamp_milli + SYN_waitperiod_ms;
+        }
     }
     auto &verifier = DSA_verifier::getInst();
     verifier.add_certificate(syn_msg);
@@ -226,7 +228,7 @@ void Dutta_Barua_GKE::round1()
         auto now = std::chrono::high_resolution_clock::now();
         auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
         auto count = now_ms.time_since_epoch().count();
-        if (count < *syn_finished_at) {
+        if (count < syn_finished_at.value()) {
             evloop.push_task([this]() { round1(); });
             return;
         }

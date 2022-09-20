@@ -40,8 +40,8 @@ class Dutta_Barua_GKE {
     // Not used for publishing, but to check permissions of the certificates on incoming messages
     const std::string channelname; const std::string mcastgroup;
 
-    const int SYN_waitperiod_ms = 1200;
-    std::optional<int> syn_finished_at;
+    const int64_t SYN_waitperiod_ms = 250;
+    std::optional<int64_t> syn_finished_at={};
 
   private:
     eventloop &evloop;

@@ -14,7 +14,7 @@
 class Dutta_Barua_SYN
 {
     public:
-        int32_t    timestamp;
+        int64_t    timestamp_milli;
 
         int32_t    cert_size;
 
@@ -116,7 +116,7 @@ int Dutta_Barua_SYN::_encodeNoHash(void *buf, int offset, int maxlen) const
 {
     int pos = 0, tlen;
 
-    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp, 1);
+    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp_milli, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->cert_size, 1);
@@ -134,7 +134,7 @@ int Dutta_Barua_SYN::_decodeNoHash(const void *buf, int offset, int maxlen)
 {
     int pos = 0, tlen;
 
-    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp, 1);
+    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp_milli, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->cert_size, 1);
@@ -152,7 +152,7 @@ int Dutta_Barua_SYN::_decodeNoHash(const void *buf, int offset, int maxlen)
 int Dutta_Barua_SYN::_getEncodedSizeNoHash() const
 {
     int enc_size = 0;
-    enc_size += __int32_t_encoded_array_size(NULL, 1);
+    enc_size += __int64_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     enc_size += __int8_t_encoded_array_size(NULL, this->cert_size);
     return enc_size;
@@ -160,7 +160,7 @@ int Dutta_Barua_SYN::_getEncodedSizeNoHash() const
 
 uint64_t Dutta_Barua_SYN::_computeHash(const __lcm_hash_ptr *)
 {
-    uint64_t hash = 0xf3b447bec0b16d13LL;
+    uint64_t hash = 0x34d8f00a87d8dadeLL;
     return (hash<<1) + ((hash>>63)&1);
 }
 
