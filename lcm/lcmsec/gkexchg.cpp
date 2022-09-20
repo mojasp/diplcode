@@ -193,8 +193,25 @@ inline void Dutta_Barua_GKE::SYN()
 
     lcm.publish("syn" + groupexchg_channelname, &syn);
 
-    auto r1 = [=] { round1(); };
-    evloop.push_task(r1);
+    if (!syn_finished_at) {  // not received any other syn - SYN ourselves again
+        evloop.push_task([this]() { SYN(); });
+        return;
+    }
+    if (syn_finished_at) {
+        // Already received a SYN
+        auto now = std::chrono::high_resolution_clock::now();
+        auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
+        auto count = now_ms.time_since_epoch().count();
+        if (count < syn_finished_at.value()) {
+            // BUt not ready for round1 yet -> SYN again
+            evloop.push_task([this]() { SYN(); });
+            return;
+        } else {
+            //Good to start round1
+            auto r1 = [=] { round1(); };
+            evloop.push_task(r1);
+        }
+    }
 }
 
 inline void Dutta_Barua_GKE::onSYN(const Dutta_Barua_SYN *syn_msg)
@@ -208,37 +225,22 @@ inline void Dutta_Barua_GKE::onSYN(const Dutta_Barua_SYN *syn_msg)
         int count_now = now_ms.time_since_epoch().count();
         if (syn_msg->timestamp_milli < count_now + SYN_waitperiod_ms) {
             syn_finished_at = syn_msg->timestamp_milli + SYN_waitperiod_ms;
-            assert(false);
         } else {
             syn_finished_at = syn_msg->timestamp_milli + SYN_waitperiod_ms;
         }
     }
+
     auto &verifier = DSA_verifier::getInst();
     verifier.add_certificate(syn_msg);
-
 }
 
 void Dutta_Barua_GKE::round1()
 {
-    // if we are too early, push this task to the back of the eventloop and return
-    if (!syn_finished_at) {
-        evloop.push_task([this]() { round1(); });
-        return;
-    }
-    if (syn_finished_at) {
-        auto now = std::chrono::high_resolution_clock::now();
-        auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
-        auto count = now_ms.time_since_epoch().count();
-        if (count < syn_finished_at.value()) {
-            evloop.push_task([this]() { round1(); });
-            return;
-        }
-    }
-
     auto &verifier = DSA_verifier::getInst();
     participants = verifier.count_participants(mcastgroup, channelname);
 
-    debug(("Dutta_Barua_GKE::starting with ()"+std::to_string(participants)+"participants").c_str());
+    debug(("Dutta_Barua_GKE: starting with %s", std::to_string(participants) + "participants")
+              .c_str());
     partial_session_id.push_back(uid);  // initialize the partial session id with
 
     constexpr int group_bitsize = 4096;
