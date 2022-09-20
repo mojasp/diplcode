@@ -208,9 +208,11 @@ class DSA_verifier {
                 ? std::nullopt
                 : std::optional<std::string>(channelname);  // quick hack as workaround for now
 
-        int count = 0; //count ourselves as well
-        for (auto& cap : certificate_store) {
-            if(cap.first.channelname == optchannel && (cap.first.channelname == channelname || (!cap.first.channelname && !optchannel))) count++;
+        int count = 0;  // count ourselves as well
+        for (auto &cap : certificate_store) {
+            if (cap.first.channelname == optchannel &&
+                (cap.first.channelname == channelname || (!cap.first.channelname && !optchannel)))
+                count++;
         }
         return count;
     }

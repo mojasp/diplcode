@@ -19,11 +19,11 @@ root_ca       = "x509v3/root_ca.crt"
 [group.alpha.channel1]
 
 channelname   = "channel1"
-send          = true
-receive       = false
+send          = false
+receive       = true
 
 [group.alpha.channel2]
 
 channelname   = "channel2"
-send          = true
-receive       = false
+send          = false
+receive       = true

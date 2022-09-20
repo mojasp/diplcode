@@ -239,7 +239,7 @@ void Dutta_Barua_GKE::round1()
     auto &verifier = DSA_verifier::getInst();
     participants = verifier.count_participants(mcastgroup, channelname);
 
-    debug(("Dutta_Barua_GKE: starting with %s", std::to_string(participants) + "participants")
+    debug(("Dutta_Barua_GKE: starting with %s" + std::to_string(participants) + "participants")
               .c_str());
     partial_session_id.push_back(uid);  // initialize the partial session id with
 
