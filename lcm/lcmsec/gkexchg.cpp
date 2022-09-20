@@ -166,14 +166,14 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
                          " failed: faulty message (msg->round) but valid signature";
             throw std::runtime_error(error);
         }
-        r2_messages[msg->u] = *msg;
+        r2_messages[uid_to_protocol_uid(msg->u)] = *msg;
     }
 
     // Check prerequisites for next round
     if (!r2_finished && r1_messages.left && r1_messages.right) {
         evloop.push_task([this] { round2(); });
     }
-    if (r2_finished && r2_messages.size() == participants) {
+    if (r2_finished && r2_messages.size() == participants.size()) {
         evloop.push_task([this] { computeKey(); });
     }
 }
@@ -237,11 +237,12 @@ inline void Dutta_Barua_GKE::onSYN(const Dutta_Barua_SYN *syn_msg)
 void Dutta_Barua_GKE::round1()
 {
     auto &verifier = DSA_verifier::getInst();
-    participants = verifier.count_participants(mcastgroup, channelname);
+    participants = verifier.participant_uids(mcastgroup, channelname);
+    std::sort(participants.begin(), participants.end());
 
-    debug(("Dutta_Barua_GKE: starting with %s" + std::to_string(participants) + "participants")
+    debug(("Dutta_Barua_GKE: starting with " + std::to_string(participants.size()) + "participants")
               .c_str());
-    partial_session_id.push_back(uid);  // initialize the partial session id with
+    partial_session_id.push_back(user_id{uid_to_protocol_uid(uid.u), uid.d});  // initialize the partial session id with the *protocol_user_id*
 
     constexpr int group_bitsize = 4096;
     Botan::DL_Group group("modp/ietf/" + std::to_string(group_bitsize));
@@ -256,6 +257,7 @@ void Dutta_Barua_GKE::round1()
 
     Dutta_Barua_message msg;
 
+    //For sending messages; use the true user_ids that correspond to the capabilities configured in the protocol
     msg.u = this->uid.u;
     msg.round = 1;
     db_set_public_value(msg, X);
@@ -304,28 +306,30 @@ void Dutta_Barua_GKE::computeKey()
 {
     // debug("computeKey()");
     for (auto &[i, incoming] : r2_messages) {
-        partial_session_id.push_back({incoming.u, incoming.d});
+        partial_session_id.push_back(user_id{uid_to_protocol_uid(incoming.u), incoming.d});
     }
     auto wrapindex = [=](int i) {
-        return ((i - 1) % participants) +
+        return ((i - 1) % participants.size()) +
                1;  // wraparound respecting 1-indexing of dutta barua paper
     };
 
     std::map<int, Botan::BigInt> right_keys;
 
+
     // we can immediately add our own right key (computed from the previous round)
-    right_keys[uid.u] = Botan::BigInt(r1_results.right);
+    int protocol_uid = uid_to_protocol_uid(uid.u);
+    right_keys[protocol_uid] = Botan::BigInt(r1_results.right);
 
     Botan::BigInt current_rightkey = r1_results.right;
 
     Botan::BigInt Y;
-    db_get_public_value(r2_messages[wrapindex(uid.u + 1)], Y);
+    db_get_public_value(r2_messages[wrapindex(protocol_uid + 1)], Y);
 
     current_rightkey = (Y * current_rightkey) % x_i->group_p();
-    right_keys[wrapindex(uid.u + 1)] = Botan::BigInt(current_rightkey);
+    right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
 
-    for (int i = 2; i <= participants - 1; i++) {
-        int idx = wrapindex(i + uid.u);
+    for (int i = 2; i <= participants.size() - 1; i++) {
+        int idx = wrapindex(i + protocol_uid);
         // debug(("idx: " + std::to_string(idx)).c_str());
         assert(r2_messages.count(idx) == 1);
         db_get_public_value(r2_messages[idx], Y);
@@ -335,7 +339,7 @@ void Dutta_Barua_GKE::computeKey()
     }
 
     // correctness check
-    int lastindex = wrapindex(uid.u + participants - 1);
+    int lastindex = wrapindex(protocol_uid + participants.size() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
     if (correctness)
         debug("key computation correctness check passed");

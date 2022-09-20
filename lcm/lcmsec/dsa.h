@@ -200,9 +200,18 @@ class DSA_verifier {
         }
     }
 
-    int count_participants(std::string multicast_group, std::string channelname) const
+    /**
+     * @brief return a list of all the participating uid's (from the certificates we have seen
+     * during the SYN phase) for the requested group and channel. This is needed to compute our
+     * neighbour in the group key exchange protocol.
+     *
+     * @param multicast_group group
+     * @param channelname channel
+     * @return vector of participating uids
+     */
+    std::vector<int> participant_uids(std::string multicast_group, std::string channelname) const
     {
-        std::cout << channelname << std::endl;
+        std::vector<int> uids;
         std::optional<std::string> optchannel =
             (channelname == std::string("239.255.76.67:7667"))
                 ? std::nullopt
@@ -212,9 +221,10 @@ class DSA_verifier {
         for (auto &cap : certificate_store) {
             if (cap.first.channelname == optchannel &&
                 (cap.first.channelname == channelname || (!cap.first.channelname && !optchannel)))
-                count++;
+            uids.push_back(cap.first.uid);
+        
         }
-        return count;
+        return uids;
     }
 
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
