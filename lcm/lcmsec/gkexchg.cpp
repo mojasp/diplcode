@@ -240,7 +240,7 @@ void Dutta_Barua_GKE::round1()
     participants = verifier.participant_uids(mcastgroup, channelname);
     std::sort(participants.begin(), participants.end());
 
-    debug(("Dutta_Barua_GKE: starting with " + std::to_string(participants.size()) + "participants")
+    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(participants.size()) + "participants ------- ")
               .c_str());
     partial_session_id.push_back(user_id{uid_to_protocol_uid(uid.u), uid.d});  // initialize the partial session id with the *protocol_user_id*
 
@@ -269,7 +269,6 @@ void Dutta_Barua_GKE::round1()
 void Dutta_Barua_GKE::round2()
 {
     assert(r1_messages.left && r1_messages.right);
-    debug("round2");
     auto x_i_value = x_i->get_x();
 
     auto &msgleft = r1_messages.left;
@@ -304,7 +303,6 @@ void Dutta_Barua_GKE::round2()
 
 void Dutta_Barua_GKE::computeKey()
 {
-    // debug("computeKey()");
     for (auto &[i, incoming] : r2_messages) {
         partial_session_id.push_back(user_id{uid_to_protocol_uid(incoming.u), incoming.d});
     }
@@ -342,7 +340,7 @@ void Dutta_Barua_GKE::computeKey()
     int lastindex = wrapindex(protocol_uid + participants.size() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
     if (correctness)
-        debug("key computation correctness check passed");
+        debug("group key exchange successful!");
     else {
         debug("key computation correctness check failed");
         return;  // FIXME failure should be signaled in some form is actionable for the
@@ -356,7 +354,6 @@ void Dutta_Barua_GKE::computeKey()
     using namespace std;
     // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
     // endl;
-    cout << "session key bitsize: " << shared_secret->bits() << " bits" << endl;
 
     evloop.channel_finished();
 }

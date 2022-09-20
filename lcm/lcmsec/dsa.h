@@ -243,7 +243,6 @@ class DSA_verifier {
                 "found no certificate for needed permissions of the incoming message (%s: %s: "
                 "%i)\n",
                 desired_cap.mcasturl.c_str(), channelname.c_str(), msg->u);
-            std::cout << "sz: " << certificate_store.size() << std::endl;
             return false;
         }
 
