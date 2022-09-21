@@ -16,6 +16,7 @@ set(lcm_sources
   lcmtypes/channel_to_port_t.c
   lcmsec/crypto_wrapper.cpp
   lcmsec/gkexchg.cpp
+  lcmsec/dsa.cpp
 )
 
 set(CMAKE_CXX_STANDARD 17)

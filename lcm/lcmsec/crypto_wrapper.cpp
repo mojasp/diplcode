@@ -109,7 +109,8 @@ class _lcm_security_ctx {
     {
         auto &param = *params;
 
-        //Usage of constant singleton classes to get global access to the private key and certificates
+        // Usage of constant singleton classes to get global access to the private key and
+        // certificates
         lcmsec_impl::DSA_signer::getInst(param.keyfile);
         lcmsec_impl::DSA_verifier::getInst(param.root_ca);
         lcmsec_impl::DSA_certificate_self::getInst(param.certificate);
@@ -119,47 +120,39 @@ class _lcm_security_ctx {
         //  subscribe or join()?) - or give the user a choice which channels shall be registered
         std::string cert_file = param.certificate;
         Botan::X509_Certificate cert(cert_file);  // FIXME: params not as array
-        auto capabilities = lcmsec_impl::parse_certificate_capabilities(cert);
 
         lcm::LCM lcm;  // FIXME use nondefault instance (respecting initialization parameters)
 
         lcmsec_impl::eventloop ev_loop(lcm);
-        int channels{0}; //count channels that we have to configure -- needed for eventloop
 
         // Setup group key exchange for the channels for which we have capabilities
-        for (auto &[group, m] : capabilities) {
-            for (auto &[channel, uid] : m) {
-                channels++;
-                if (channel == std::nullopt) {
-                    // the channel for the group config
-                    std::string group_keyxchg_channel =
-                        group;  // FIXME - this should be handled differently and documented
-                    auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
-                        group, group_keyxchg_channel, ev_loop, lcm, uid);
-                    lcm.subscribe("lcm://"+ group_keyxchg_channel,
-                                  &lcmsec_impl::Key_Exchange_Manager::handleMessage,
-                                  keyExchangeManager.get());
-                    lcm.subscribe("synlcm://"+ group_keyxchg_channel,
-                                  &lcmsec_impl::Key_Exchange_Manager::handle_SYN,
-                                  keyExchangeManager.get());
-                    group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(
-                        std::move(keyExchangeManager), uid, "AES-128/GCM");
-                } else {
-                    auto keyExchangeManager = std::make_unique<lcmsec_impl::Key_Exchange_Manager>(
-                        group, channel.value(), ev_loop, lcm, uid);
-                    lcm.subscribe("lcm://" + channel.value(),
-                                  &lcmsec_impl::Key_Exchange_Manager::handleMessage,
-                                  keyExchangeManager.get());
-                    lcm.subscribe("synlcm://" + channel.value(),
-                                  &lcmsec_impl::Key_Exchange_Manager::handle_SYN,
-                                  keyExchangeManager.get());
-                    channel_ctx_map[strndup(channel.value().c_str(), LCM_MAX_CHANNEL_NAME_LENGTH)] =
-                        std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
-                                                                  uid, "AES_128/GCM");
-                }
+        auto capabilities = lcmsec_impl::capability::from_certificate(cert);
+        int channels = capabilities.size();
+        for (auto &cap : std::move(capabilities)) {
+            std::string keyxchg_channel;
+            if (cap.channelname == std::nullopt) {
+                // the channel for the group config
+                keyxchg_channel = cap.mcasturl;
+            } else {
+                keyxchg_channel = *cap.channelname;
+            }
+            std::cout << "cwrap" << cap << std::endl;
+            auto keyExchangeManager =
+                std::make_unique<lcmsec_impl::Key_Exchange_Manager>(cap, ev_loop, lcm);
+            lcm.subscribe("lcm://" + keyxchg_channel,
+                          &lcmsec_impl::Key_Exchange_Manager::handleMessage,
+                          keyExchangeManager.get());
+            lcm.subscribe("synlcm://" + keyxchg_channel,
+                          &lcmsec_impl::Key_Exchange_Manager::handle_SYN, keyExchangeManager.get());
+            if (cap.channelname) {
+                channel_ctx_map[strndup(cap.channelname->c_str(), LCM_MAX_CHANNEL_NAME_LENGTH)] =
+                    std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
+                                                              cap.uid, "AES_128/GCM");
+            } else {
+                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
+                                                                      cap.uid, "AES_128/GCM");
             }
         }
-
 
         ev_loop.run(channels);
     }

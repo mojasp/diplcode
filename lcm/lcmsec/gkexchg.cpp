@@ -3,25 +3,15 @@
 #include <assert.h>
 #include <botan/auto_rng.h>
 #include <botan/dh.h>
-#include <botan/dl_group.h>
-#include <botan/ec_group.h>
-#include <botan/ecdsa.h>
-#include <botan/hex.h>
 #include <botan/kdf.h>
 #include <botan/numthry.h>
+#include <botan/pkix_types.h>
 #include <botan/pubkey.h>
 
 #include <algorithm>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <numeric>
-#include <stack>
 #include <vector>
 
-#include "crypto_wrapper.h"
-#include "lcm-cpp.hpp"
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
@@ -44,14 +34,14 @@ namespace lcmsec_impl {
 //     }
 // }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(std::string mcastgroup, std::string channelname,
-                                 eventloop &ev_loop, lcm::LCM &lcm, int uid)
-    : channelname(channelname),
-      mcastgroup(std::move(mcastgroup)),
-      groupexchg_channelname("lcm://" + channelname),
+Dutta_Barua_GKE::Dutta_Barua_GKE(capability cap,
+                                 eventloop &ev_loop, lcm::LCM &lcm)
+     : groupexchg_channelname(std::string(std::string("lcm://") + cap.channelname.value_or(cap.mcasturl))),
+    channelname(std::move(cap.channelname)),
+      mcastgroup(std::move(cap.mcasturl)),
       evloop(ev_loop),
       lcm(lcm),
-      uid{uid, 1}
+      uid{cap.uid, 1}
 {
 }
 
@@ -76,7 +66,8 @@ static void botan_x509_example(Dutta_Barua_message &msg)
     // Certificate is valid => check if the message is signed by that certificate
     auto pkey = cert.subject_public_key();
     std::cout << "algname" << pkey->algo_name() << std::endl;
-    Botan::PK_Verifier verifier(*pkey, emca);
+    const static std::string ecdsa_emca = "EMSA1(SHA-256)";
+    Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
     verifier.update((const uint8_t *) &msg.u, 4);
     verifier.update(msg.round);
     verifier.update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
@@ -148,7 +139,7 @@ void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)
         return;
 
     auto &verifier = DSA_verifier::getInst();
-    if (!verifier.db_verify(msg, mcastgroup, channelname)) {
+    if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
         debug("signature verification failed");
         return;
     }
@@ -191,7 +182,8 @@ inline void Dutta_Barua_GKE::SYN()
     syn.x509_certificate_BER =
         std::vector<int8_t>((int8_t *) data.data(), (int8_t *) (data.data() + syn.cert_size));
 
-    lcm.publish("syn" + groupexchg_channelname, &syn);
+    std::string ch = std::string("syn") + groupexchg_channelname;
+    lcm.publish(ch, &syn);
 
     if (!syn_finished_at) {  // not received any other syn - SYN ourselves again
         evloop.push_task([this]() { SYN(); });
@@ -207,7 +199,7 @@ inline void Dutta_Barua_GKE::SYN()
             evloop.push_task([this]() { SYN(); });
             return;
         } else {
-            //Good to start round1
+            // Good to start round1
             auto r1 = [=] { round1(); };
             evloop.push_task(r1);
         }
@@ -240,9 +232,12 @@ void Dutta_Barua_GKE::round1()
     participants = verifier.participant_uids(mcastgroup, channelname);
     std::sort(participants.begin(), participants.end());
 
-    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(participants.size()) + "participants ------- ")
+    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(participants.size()) +
+           "participants ------- ")
               .c_str());
-    partial_session_id.push_back(user_id{uid_to_protocol_uid(uid.u), uid.d});  // initialize the partial session id with the *protocol_user_id*
+    partial_session_id.push_back(
+        user_id{uid_to_protocol_uid(uid.u),
+                uid.d});  // initialize the partial session id with the *protocol_user_id*
 
     constexpr int group_bitsize = 4096;
     Botan::DL_Group group("modp/ietf/" + std::to_string(group_bitsize));
@@ -257,7 +252,8 @@ void Dutta_Barua_GKE::round1()
 
     Dutta_Barua_message msg;
 
-    //For sending messages; use the true user_ids that correspond to the capabilities configured in the protocol
+    // For sending messages; use the true user_ids that correspond to the capabilities configured in
+    // the protocol
     msg.u = this->uid.u;
     msg.round = 1;
     db_set_public_value(msg, X);
@@ -312,7 +308,6 @@ void Dutta_Barua_GKE::computeKey()
     };
 
     std::map<int, Botan::BigInt> right_keys;
-
 
     // we can immediately add our own right key (computed from the previous round)
     int protocol_uid = uid_to_protocol_uid(uid.u);
@@ -369,12 +364,11 @@ Botan::secure_vector<uint8_t> Dutta_Barua_GKE::get_session_key(size_t key_size)
     return kdf->derive_key(key_size, encoded);
 }
 
-Key_Exchange_Manager::Key_Exchange_Manager(std::string mcastgroup, std::string channelname,
-                                           eventloop &ev_loop, lcm::LCM &lcm, int uid)
-    : impl(mcastgroup, channelname, ev_loop, lcm, uid)
+Key_Exchange_Manager::Key_Exchange_Manager(capability cap, eventloop &ev_loop, lcm::LCM &lcm)
+    : impl(cap, ev_loop, lcm)
 {
-    auto r2 = [=] { impl.SYN(); };
-    ev_loop.push_task(r2);
+    auto t = [this] { impl.SYN(); };
+    ev_loop.push_task(t);
 };
 
 void Key_Exchange_Manager::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,

@@ -4,12 +4,12 @@
 #include <botan/bigint.h>
 #include <botan/dh.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-#include <algorithm>
 
 #include "crypto_wrapper.h"
 #include "dsa.h"
@@ -22,8 +22,7 @@ namespace lcmsec_impl {
 
 class Dutta_Barua_GKE {
   public:
-    Dutta_Barua_GKE(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
-                    lcm::LCM &lcm, int uid);
+    Dutta_Barua_GKE(capability cap, eventloop &ev_loop, lcm::LCM &lcm);
 
     inline void SYN();
     inline void onSYN(const Dutta_Barua_SYN *syn_msg);
@@ -39,11 +38,12 @@ class Dutta_Barua_GKE {
         groupexchg_channelname;  // the channelname used for the management of the keyexchange
 
     // Not used for publishing, but to check permissions of the certificates on incoming messages
-    const std::string channelname; const std::string mcastgroup;
+    const std::optional<std::string> channelname;
+    const std::string mcastgroup;
 
     const int64_t SYN_waitperiod_ms = 125;
     const int64_t SYN_rebroadcast_interval = 50;
-    std::optional<int64_t> syn_finished_at={};
+    std::optional<int64_t> syn_finished_at = {};
 
   private:
     eventloop &evloop;
@@ -75,21 +75,25 @@ class Dutta_Barua_GKE {
     bool r2_finished = false;
 
     // ------ Helper methods --------//
-    // Map virtual user ids (counting - sequentially - all the user ID's that are participating in the protocol) to the real ones (the ones that are configured in the certificates, and are part of the messages that are transmitted)
-    // NOTE: both use 1-indexing
-    inline int uid_to_protocol_uid (int uid){
-        auto it = 
-            std::lower_bound(participants.cbegin(), participants.cend(), uid); //take advantage of sorted array and do a binary search
-        if(it == participants.end()){
-            throw std::runtime_error ("error: found no protocol uid for");
-        }
-        else return it - participants.begin() + 1; //else, return the index that we found (but use 1-indexing)
+    // Map virtual user ids (counting - sequentially - all the user ID's that are participating in
+    // the protocol) to the real ones (the ones that are configured in the certificates, and are
+    // part of the messages that are transmitted) NOTE: both use 1-indexing
+    inline int uid_to_protocol_uid(int uid)
+    {
+        auto it = std::lower_bound(participants.cbegin(), participants.cend(),
+                                   uid);  // take advantage of sorted array and do a binary search
+        if (it == participants.end()) {
+            throw std::runtime_error("error: found no protocol uid for");
+        } else
+            return it - participants.begin() +
+                   1;  // else, return the index that we found (but use 1-indexing)
     }
 
-    inline int protocol_uid_to_uid(int proto_uid) {
-        //the protocol user ID's are the indices of participants
-        // NOTE: it is necessary to convert from and to 1-indexing here
-        return participants.at(proto_uid-1) + 1;
+    inline int protocol_uid_to_uid(int proto_uid)
+    {
+        // the protocol user ID's are the indices of participants
+        //  NOTE: it is necessary to convert from and to 1-indexing here
+        return participants.at(proto_uid - 1) + 1;
     }
 
     inline bool is_neighbour(const Dutta_Barua_message *msg)
@@ -133,8 +137,7 @@ class Dutta_Barua_GKE {
  */
 class Key_Exchange_Manager {
   public:
-    Key_Exchange_Manager(std::string mcastgroup, std::string channelname, eventloop &ev_loop,
-                         lcm::LCM &lcm, int uid);
+    Key_Exchange_Manager(capability cap, eventloop &ev_loop, lcm::LCM &lcm);
 
     void handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                        const Dutta_Barua_message *msg);
