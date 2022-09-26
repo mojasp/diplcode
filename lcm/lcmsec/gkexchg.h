@@ -3,6 +3,7 @@
 
 #include <botan/bigint.h>
 #include <botan/dh.h>
+#include <botan/ecdh.h>
 
 #include <cassert>
 #include <map>
@@ -90,17 +91,18 @@ class Dutta_Barua_GKE {
     std::optional<std::chrono::steady_clock::time_point> last_answered_join{};
 
     struct {
-        Botan::BigInt left;   // K_i^l
-        Botan::BigInt right;  // K_i^r
+        Botan::PointGFp left;   // K_i^l
+        Botan::PointGFp right;  // K_i^r
     } r1_results;
 
     bool r2_finished = false;
 
     std::vector<user_id> partial_session_id;
 
-    std::optional<Botan::BigInt> x_i;
+    std::optional<Botan::BigInt>
+        x_i;  // no default constructor for DH_PrivateKey and it cannot be immediately initialized
     static constexpr int group_bitsize = 4096;
-    Botan::DL_Group group{"modp/ietf/" + std::to_string(group_bitsize)};
+    static const Botan::EC_Group group;
 
     std::map<int, Dutta_Barua_message> r2_messages;
     struct {
@@ -108,7 +110,7 @@ class Dutta_Barua_GKE {
         std::optional<Dutta_Barua_message> right;  // message from U_{i+1}
     } r1_messages;
 
-    std::optional<Botan::BigInt> shared_secret;
+    std::optional<Botan::PointGFp> shared_secret;
     bool has_new_key; //FIXME synchronization?
 
     virtual void debug(std::string msg) = 0;
@@ -136,6 +138,9 @@ class Dutta_Barua_GKE {
         //  NOTE: it is necessary to convert from and to 1-indexing here
         return joining_participants.at(proto_uid - 1) + 1;
     }
+
+    static void db_set_public_value(Dutta_Barua_message &msg, const Botan::PointGFp &point);
+    static void db_get_public_value(const Dutta_Barua_message &msg, Botan::PointGFp &point);
 };
 
 class KeyExchangeManager : public Dutta_Barua_GKE {
@@ -210,7 +215,6 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     }
 
     void sign_and_dispatch(Dutta_Barua_message &msg) override;
-    static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
 
     inline void debug(std::string msg) override
     {

@@ -2,12 +2,14 @@
 
 #include <assert.h>
 #include <botan/auto_rng.h>
+#include <botan/curve_gfp.h>
 #include <botan/dh.h>
 #include <botan/ec_group.h>
 #include <botan/ecdh.h>
 #include <botan/kdf.h>
 #include <botan/numthry.h>
 #include <botan/pkix_types.h>
+#include <botan/point_gfp.h>
 #include <botan/pubkey.h>
 
 #include <algorithm>
@@ -116,18 +118,18 @@ void KeyExchangeManager::sign_and_dispatch(Dutta_Barua_message &msg)
     lcm.publish(groupexchg_channelname, &msg);
 }
 
-static void db_set_public_value(Dutta_Barua_message &msg, const Botan::BigInt &bigint)
+void Dutta_Barua_GKE::db_set_public_value(Dutta_Barua_message &msg, const Botan::PointGFp &point)
 {
-    assert(bigint != 0);
-    msg.public_value_size = bigint.bits();
-    msg.public_value.resize(bigint.bits());
-    bigint.binary_encode((uint8_t *) (msg.public_value.data()), bigint.bits());
+    msg.public_value = point.encode(Botan::PointGFp::Compression_Type::COMPRESSED);
+    msg.public_value_size = msg.public_value.size();
 }
 
-static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint)
+void Dutta_Barua_GKE::db_get_public_value(const Dutta_Barua_message &msg, Botan::PointGFp &p)
 {
-    bigint.binary_decode((uint8_t *) msg.public_value.data(), msg.public_value.size());
+    p = group.OS2ECP(msg.public_value);
 }
+
+const Botan::EC_Group Dutta_Barua_GKE::group{"secp256r1"};
 
 /*
  * uid layout
@@ -428,16 +430,17 @@ void Dutta_Barua_GKE::round1()
         user_id{uid_to_protocol_uid(uid.u),
                 uid.d});  // initialize the partial session id with the *protocol_user_id*
 
+    Botan::PointGFp X;
+    Botan::AutoSeeded_RNG rng;
     if (!x_i) {  // In the join phase, x_i might have to be preinitialized.
         // Only generate a new x_i in case it doesn't exist
-        Botan::AutoSeeded_RNG rng;
-        auto privkey = Botan::DH_PrivateKey(rng, group);
-        x_i = privkey.get_x();
+        auto privkey = Botan::ECDH_PrivateKey(rng, group);
+        x_i = privkey.private_value();
+        X = privkey.public_point();
+    } else {
+        std::vector<Botan::BigInt> ws;
+        X = group.blinded_base_point_multiply(*x_i, rng, ws);
     }
-
-    // public value; i.e. g^x mod q; where x is private key. This public value is called
-    // capital X in Dutta Barua paper
-    Botan::BigInt X = Botan::power_mod(group.get_g(), x_i.value(), group.get_p());
 
     Dutta_Barua_message msg;
 
@@ -457,26 +460,23 @@ void Dutta_Barua_GKE::round2()
 {
     assert(r1_messages.left && r1_messages.right);
     assert(!r2_finished);
+
     auto &msgleft = r1_messages.left;
     auto &msgright = r1_messages.right;
 
-    Botan::BigInt left_X;
+    Botan::PointGFp left_X;
     db_get_public_value(*msgleft, left_X);
 
-    r1_results.left = Botan::power_mod(left_X, x_i.value(), group.get_p());
+    r1_results.left = left_X * x_i.value();
 
-    Botan::BigInt right_X;
+    Botan::PointGFp right_X;
     db_get_public_value(*msgright, right_X);
-    r1_results.right = Botan::power_mod(right_X, x_i.value(), group.get_p());
-
-    assert(r1_results.right != 0);
-    assert(r1_results.left != 0);
+    r1_results.right = right_X * x_i.value();
 
     if (getRole() != JOIN_ROLE::passive) {
-        auto leftkey_inverse = Botan::inverse_mod(r1_results.left, group.get_p());
-        Botan::BigInt Y = (r1_results.right * leftkey_inverse) % group.get_p();
+        auto Y = r1_results.right - r1_results.left;
 
-        assert(Y != 0);
+        assert(!Y.is_zero());
         Dutta_Barua_message msg;
         msg.u = uid.u;
         msg.round = 2;
@@ -488,32 +488,33 @@ void Dutta_Barua_GKE::round2()
     r2_finished = true;
 }
 
-void Dutta_Barua_GKE::computeKey_passive() {
-    std::map<int, Botan::BigInt> right_keys;
+void Dutta_Barua_GKE::computeKey_passive()
+{
+    std::map<int, Botan::PointGFp> right_keys;
 
-    auto wrapindex = [sz=joining_participants.size()](int i) {
-        return ((i - 1) % sz )+
-               1;  // wraparound respecting 1-indexing of dutta barua paper
+    auto wrapindex = [sz = joining_participants.size()](int i) {
+        return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
     // we can immediately add our own right key (computed from the previous round)
     int protocol_uid = 2;
-    right_keys[protocol_uid] = Botan::BigInt(r1_results.right);
+    right_keys[protocol_uid] = r1_results.right;
 
-    Botan::BigInt current_rightkey = r1_results.right;
+    auto current_rightkey = r1_results.right;
 
-    Botan::BigInt Y;
+    Botan::PointGFp Y;
     db_get_public_value(r2_messages[wrapindex(protocol_uid + 1)], Y);
 
-    current_rightkey = (Y * current_rightkey) % group.get_p();
-    right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
+    current_rightkey = Y + current_rightkey;
+    right_keys[wrapindex(protocol_uid + 1)] = (current_rightkey);
 
     for (int i = 2; i <= joining_participants.size() - 1; i++) {
         int idx = wrapindex(i + protocol_uid);
+        // debug(("idx: " + std::to_string(idx)).c_str());
         assert(r2_messages.count(idx) == 1);
         db_get_public_value(r2_messages[idx], Y);
-        current_rightkey = (Y * current_rightkey) % group.get_p();
+        current_rightkey = Y + current_rightkey;
 
-        right_keys[idx] = Botan::BigInt(current_rightkey);
+        right_keys[idx] = current_rightkey;
     }
 
     // correctness check
@@ -526,19 +527,15 @@ void Dutta_Barua_GKE::computeKey_passive() {
         return;  // FIXME failure should be signaled in some form is actionable for the
                  // consumer of the API
     }
-    shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
-                                    [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
-                                        return (acc * value.second) % group.get_p();
-                                    });
 
-    using namespace std;
-    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
-    // endl;
+    shared_secret = group.zero_point();
+    for (auto kr : right_keys) {
+        *shared_secret += kr.second;
+    }
 
     participants = MOV(joining_participants);
     joining_participants.clear();
     gkexchg_finished();
-    
 }
 
 void Dutta_Barua_GKE::computeKey()
@@ -546,33 +543,32 @@ void Dutta_Barua_GKE::computeKey()
     for (auto &[i, incoming] : r2_messages) {
         partial_session_id.push_back(user_id{uid_to_protocol_uid(incoming.u), incoming.d});
     }
-    auto wrapindex = [sz=joining_participants.size()](int i) {
-        return ((i - 1) % sz) +
-               1;  // wraparound respecting 1-indexing of dutta barua paper
+    auto wrapindex = [sz = joining_participants.size()](int i) {
+        return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
 
-    std::map<int, Botan::BigInt> right_keys;
+    std::map<int, Botan::PointGFp> right_keys;
 
     // we can immediately add our own right key (computed from the previous round)
     int protocol_uid = uid_to_protocol_uid(uid.u);
-    right_keys[protocol_uid] = Botan::BigInt(r1_results.right);
+    right_keys[protocol_uid] = r1_results.right;
 
-    Botan::BigInt current_rightkey = r1_results.right;
+    auto current_rightkey = r1_results.right;
 
-    Botan::BigInt Y;
+    Botan::PointGFp Y;
     db_get_public_value(r2_messages[wrapindex(protocol_uid + 1)], Y);
 
-    current_rightkey = (Y * current_rightkey) % group.get_p();
-    right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
+    current_rightkey = Y + current_rightkey;
+    right_keys[wrapindex(protocol_uid + 1)] = (current_rightkey);
 
     for (int i = 2; i <= joining_participants.size() - 1; i++) {
         int idx = wrapindex(i + protocol_uid);
         // debug(("idx: " + std::to_string(idx)).c_str());
         assert(r2_messages.count(idx) == 1);
         db_get_public_value(r2_messages[idx], Y);
-        current_rightkey = (Y * current_rightkey) % group.get_p();
+        current_rightkey = Y + current_rightkey;
 
-        right_keys[idx] = Botan::BigInt(current_rightkey);
+        right_keys[idx] = current_rightkey;
     }
 
     // correctness check
@@ -585,14 +581,11 @@ void Dutta_Barua_GKE::computeKey()
         return;  // FIXME failure should be signaled in some form is actionable for the
                  // consumer of the API
     }
-    shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
-                                    [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
-                                        return (acc * value.second) % group.get_p();
-                                    });
 
-    using namespace std;
-    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
-    // endl;
+    shared_secret = group.zero_point();
+    for (auto kr : right_keys) {
+        *shared_secret += kr.second;
+    }
 
     participants = MOV(joining_participants);
     joining_participants.clear();
@@ -602,8 +595,8 @@ void Dutta_Barua_GKE::computeKey()
 void Dutta_Barua_GKE::prepare_join()
 {
     // Cleanup any intermediate stuff
-    r1_results.left.clear();
-    r1_results.right.clear();
+    r1_results.left = {};
+    r1_results.right = {};
     r1_messages.left = {};
     r1_messages.right = {};
 
@@ -650,8 +643,10 @@ void Dutta_Barua_GKE::join_existing()
     bool last = participants.back() == uid.u;
 
     if (!first && !last) {
-        // initialize x_i from shared_secret instead FIXME hash
-        x_i = shared_secret;
+        // initialize x_i from shared_secret
+        auto kdf = Botan::get_kdf("KDF2(SHA-256)");
+        auto encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
+        x_i = Botan::BigInt(encoded);
     }
     if (first || second || last) {
         getRole() = JOIN_ROLE::active;
@@ -701,9 +696,12 @@ Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_siz
             ". Maybe the group key "
             "exchange algorithm was not successful\n");
     auto kdf = Botan::get_kdf("KDF2(SHA-256)");
-    auto encoded = Botan::BigInt::encode_locked(*shared_secret);
+    auto encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
+    Botan::secure_vector<uint8_t> secure_encoded(
+        encoded.data(),
+        encoded.data() + encoded.size());  // FIXME: this is stupid. can it even be fixed??!
 
-    return kdf->derive_key(key_size, encoded);
+    return kdf->derive_key(key_size, secure_encoded);
 }
 
 KeyExchangeLCMHandler::KeyExchangeLCMHandler(capability cap, eventloop &ev_loop, lcm::LCM &lcm)
