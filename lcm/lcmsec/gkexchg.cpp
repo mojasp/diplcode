@@ -7,10 +7,7 @@
 #include <botan/numthry.h>
 #include <botan/pkix_types.h>
 #include <botan/pubkey.h>
-
-#include <algorithm>
 #include <numeric>
-#include <vector>
 
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
@@ -18,27 +15,10 @@
 
 namespace lcmsec_impl {
 
-
-// static void generate_testing_keypairs()
-// {
-//     for (int i = 1; i < 5; i++) {
-//         Botan::AutoSeeded_RNG rng;
-//         Botan::ECDSA_PrivateKey key(rng, Botan::EC_Group("secp521r1"));
-//         std::ofstream o;
-//         std::string filename = "testkeys/user" + std::to_string(i);
-//         o.open(filename + ".priv");
-//         o << Botan::PKCS8::PEM_encode(key);
-//         o.close();
-//         o.open(filename + ".pub");
-//         o << Botan::X509::PEM_encode(key);
-//         o.close();
-//     }
-// }
-
-Dutta_Barua_GKE::Dutta_Barua_GKE(capability cap,
-                                 eventloop &ev_loop, lcm::LCM &lcm)
-     : groupexchg_channelname(std::string(std::string("lcm://") + cap.channelname.value_or(cap.mcasturl))),
-    channelname(MOV(cap.channelname)),
+Dutta_Barua_GKE::Dutta_Barua_GKE(capability cap, eventloop &ev_loop, lcm::LCM &lcm)
+    : groupexchg_channelname(
+          std::string(std::string("lcm://") + cap.channelname.value_or(cap.mcasturl))),
+      channelname(MOV(cap.channelname)),
       mcastgroup(MOV(cap.mcasturl)),
       evloop(ev_loop),
       lcm(lcm),
@@ -131,6 +111,9 @@ void Dutta_Barua_GKE::db_set_public_value(Dutta_Barua_message &msg, const Botan:
 void Dutta_Barua_GKE::db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint)
 {
     bigint.binary_decode((uint8_t *) msg.public_value.data(), msg.public_value.size());
+}
+
+void Dutta_Barua_GKE::join() {
 }
 
 void Dutta_Barua_GKE::on_msg(const Dutta_Barua_message *msg)

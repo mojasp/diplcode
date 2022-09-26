@@ -4,9 +4,7 @@
 #include <botan/bigint.h>
 #include <botan/dh.h>
 
-#include <algorithm>
 #include <map>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -31,6 +29,8 @@ class Dutta_Barua_GKE {
     void round2();
     void computeKey();
     void on_msg(const Dutta_Barua_message *msg);
+
+    void join();
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
 

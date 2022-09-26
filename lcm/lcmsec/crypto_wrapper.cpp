@@ -13,8 +13,6 @@
 
 #include <functional>
 #include <iostream>
-#include <map>
-#include <stack>
 #include <string>
 
 #include "gkexchg.h"
