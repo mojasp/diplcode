@@ -43,7 +43,7 @@ class crypto_ctx {
 
     explicit crypto_ctx(std::unique_ptr<Key_Exchange_Manager> mgr, uint16_t sender_id,
                         std::string algorithm)
-        : keyExchangeManager(std::move(mgr)), algorithm(std::move(algorithm)), sender_id(sender_id)
+        : keyExchangeManager(MOV(mgr)), algorithm(MOV(algorithm)), sender_id(sender_id)
     // read sender_id from our own certificate FIXME -> urn parsing
     {
         IV.resize(LCMCRYPTO_IVSIZE);
@@ -128,7 +128,7 @@ class _lcm_security_ctx {
         // Setup group key exchange for the channels for which we have capabilities
         auto capabilities = lcmsec_impl::capability::from_certificate(cert);
         int channels = capabilities.size();
-        for (auto &cap : std::move(capabilities)) {
+        for (auto &cap : MOV(capabilities)) {
             std::string keyxchg_channel;
             if (cap.channelname == std::nullopt) {
                 // the channel for the group config
@@ -146,10 +146,10 @@ class _lcm_security_ctx {
                           &lcmsec_impl::Key_Exchange_Manager::handle_SYN, keyExchangeManager.get());
             if (cap.channelname) {
                 channel_ctx_map[strndup(cap.channelname->c_str(), LCM_MAX_CHANNEL_NAME_LENGTH)] =
-                    std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
+                    std::make_unique<lcmsec_impl::crypto_ctx>(MOV(keyExchangeManager),
                                                               cap.uid, "AES_128/GCM");
             } else {
-                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(std::move(keyExchangeManager),
+                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(MOV(keyExchangeManager),
                                                                       cap.uid, "AES_128/GCM");
             }
         }

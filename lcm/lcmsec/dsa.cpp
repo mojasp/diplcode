@@ -95,7 +95,7 @@ std::vector<capability> capability::from_certificate(Botan::X509_Certificate &ce
             cap.uid = std::stoi(v.substr(pos, endpos - pos));
 
             std::cout << i++ << ":" << cap << std::endl;
-            capabilities.emplace_back(std::move(cap));
+            capabilities.emplace_back(MOV(cap));
         }
     }
     return capabilities;
@@ -155,7 +155,7 @@ class DSA_verifier::impl {
             // Note that certificates are shared_ptr's under the hood, so this works
             // out nicely in terms of fast lookup times - since we store each cert
             // "multiple times", but by reference only
-            certificate_store[std::move(cap)] = cert;
+            certificate_store[MOV(cap)] = cert;
         }
     }
 
@@ -190,7 +190,7 @@ class DSA_verifier::impl {
                 ? std::nullopt
                 : std::optional<std::string>(channelname);  // quick hack as workaround for now
 
-        capability desired_cap = {std::move(multicast_group), std::move(optchannel), msg->u};
+        capability desired_cap = {MOV(multicast_group), MOV(optchannel), msg->u};
         auto cert_iter = certificate_store.find(desired_cap);
         if (cert_iter == certificate_store.end()) {
             CRYPTO_DBG(
@@ -241,13 +241,13 @@ void DSA_verifier::add_certificate(const Dutta_Barua_SYN *syn)
 std::vector<int> DSA_verifier::participant_uids(std::string multicast_group,
                                                 std::optional<std::string> channelname) const
 {
-    return pImpl->participant_uids(std::move(multicast_group), std::move(channelname));
+    return pImpl->participant_uids(MOV(multicast_group), MOV(channelname));
 }
 
 bool DSA_verifier::db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
                              std::string channelname)
 {
-    return pImpl->db_verify(msg, std::move(multicast_group), std::move(channelname));
+    return pImpl->db_verify(msg, MOV(multicast_group), MOV(channelname));
 }
 
 DSA_certificate_self::DSA_certificate_self(std::string certificate_filename)

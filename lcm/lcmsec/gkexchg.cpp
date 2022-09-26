@@ -18,6 +18,7 @@
 
 namespace lcmsec_impl {
 
+
 // static void generate_testing_keypairs()
 // {
 //     for (int i = 1; i < 5; i++) {
@@ -37,8 +38,8 @@ namespace lcmsec_impl {
 Dutta_Barua_GKE::Dutta_Barua_GKE(capability cap,
                                  eventloop &ev_loop, lcm::LCM &lcm)
      : groupexchg_channelname(std::string(std::string("lcm://") + cap.channelname.value_or(cap.mcasturl))),
-    channelname(std::move(cap.channelname)),
-      mcastgroup(std::move(cap.mcasturl)),
+    channelname(MOV(cap.channelname)),
+      mcastgroup(MOV(cap.mcasturl)),
       evloop(ev_loop),
       lcm(lcm),
       uid{cap.uid, 1}

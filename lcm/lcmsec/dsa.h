@@ -18,6 +18,13 @@
 
 namespace lcmsec_impl {
 
+// static_cast to rvalue reference
+#define MOV(...) \
+  static_cast<std::remove_reference_t<decltype(__VA_ARGS__)>&&>(__VA_ARGS__)
+
+// static_cast to identity
+#define FWD(...) \
+  static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
 
 // sign using ESMSA1 with SHA-256 over secp521r1
 class DSA_signer {
@@ -48,7 +55,7 @@ struct capability {
     inline capability& operator=(const capability&)=default;
     inline capability& operator=(capability&&)=default;
     inline capability(std::string mcasturl, std::optional<std::string>channelname, int uid) :
-         mcasturl(std::move(mcasturl)), channelname(std::move(channelname)), uid(uid) {}
+         mcasturl(MOV(mcasturl)), channelname(MOV(channelname)), uid(uid) {}
 
     static std::vector<capability> from_certificate(Botan::X509_Certificate &cert);
 };
