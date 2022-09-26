@@ -8,6 +8,8 @@
 #include <botan/pkix_types.h>
 #include <botan/pubkey.h>
 #include <numeric>
+#include <botan/ec_group.h>
+#include <botan/ecdh.h>
 
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
@@ -92,11 +94,9 @@ static void botan_x509_example(Dutta_Barua_message &msg)
 void Dutta_Barua_GKE::sign_and_dispatch(Dutta_Barua_message &msg)
 {
     auto &signer = DSA_signer::getInst();
-    auto signature = signer.db_sign(msg);
+    msg.sig = signer.db_sign(msg);
 
-    msg.sig_size = signature.size();
-    msg.sig = std::vector<int8_t>((int8_t *) signature.data(),
-                                  (int8_t *) (signature.data() + msg.sig_size));
+    msg.sig_size = msg.sig.size();
     lcm.publish(groupexchg_channelname, &msg);
 }
 
@@ -161,10 +161,8 @@ inline void Dutta_Barua_GKE::SYN()
     syn.timestamp_milli = now_ms.time_since_epoch().count();
 
     auto &cert = DSA_certificate_self::getInst().cert;
-    auto data = cert.BER_encode();
-    syn.cert_size = data.size();
-    syn.x509_certificate_BER =
-        std::vector<int8_t>((int8_t *) data.data(), (int8_t *) (data.data() + syn.cert_size));
+    syn.x509_certificate_BER = cert.BER_encode();
+    syn.cert_size = syn.x509_certificate_BER.size();
 
     std::string ch = std::string("syn") + groupexchg_channelname;
     lcm.publish(ch, &syn);

@@ -94,7 +94,6 @@ std::vector<capability> capability::from_certificate(Botan::X509_Certificate &ce
             endpos = v.find(':', pos);
             cap.uid = std::stoi(v.substr(pos, endpos - pos));
 
-            std::cout << i++ << ":" << cap << std::endl;
             capabilities.emplace_back(MOV(cap));
         }
     }

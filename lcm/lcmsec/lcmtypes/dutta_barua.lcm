@@ -5,16 +5,16 @@ struct Dutta_Barua_message
     int32_t u;
     int8_t round; //either one or two
     int32_t public_value_size;
-    int8_t public_value [public_value_size]; //public value to the chosen secret (X in round1, Y in round 2)
+    byte public_value [public_value_size]; //public value to the chosen secret (X in round1, Y in round 2)
     int32_t d;
 
     int32_t sig_size;
-    int8_t sig [sig_size];
+    byte sig [sig_size];
 }
 
 struct Dutta_Barua_SYN
 {
     int64_t timestamp_milli;
     int32_t cert_size;
-    int8_t x509_certificate_BER[cert_size];
+    byte x509_certificate_BER[cert_size];
 }

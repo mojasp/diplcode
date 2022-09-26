@@ -22,14 +22,14 @@ class Dutta_Barua_message
         /// either one or two
         int32_t    public_value_size;
 
-        std::vector< int8_t > public_value;
+        std::vector< uint8_t > public_value;
 
         /// public value to the chosen secret (X in round1, Y in round 2)
         int32_t    d;
 
         int32_t    sig_size;
 
-        std::vector< int8_t > sig;
+        std::vector< uint8_t > sig;
 
     public:
         /**
@@ -137,7 +137,7 @@ int Dutta_Barua_message::_encodeNoHash(void *buf, int offset, int maxlen) const
     if(tlen < 0) return tlen; else pos += tlen;
 
     if(this->public_value_size > 0) {
-        tlen = __int8_t_encode_array(buf, offset + pos, maxlen - pos, &this->public_value[0], this->public_value_size);
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->public_value[0], this->public_value_size);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -148,7 +148,7 @@ int Dutta_Barua_message::_encodeNoHash(void *buf, int offset, int maxlen) const
     if(tlen < 0) return tlen; else pos += tlen;
 
     if(this->sig_size > 0) {
-        tlen = __int8_t_encode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -170,7 +170,7 @@ int Dutta_Barua_message::_decodeNoHash(const void *buf, int offset, int maxlen)
 
     if(this->public_value_size) {
         this->public_value.resize(this->public_value_size);
-        tlen = __int8_t_decode_array(buf, offset + pos, maxlen - pos, &this->public_value[0], this->public_value_size);
+        tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->public_value[0], this->public_value_size);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -182,7 +182,7 @@ int Dutta_Barua_message::_decodeNoHash(const void *buf, int offset, int maxlen)
 
     if(this->sig_size) {
         this->sig.resize(this->sig_size);
-        tlen = __int8_t_decode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
+        tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -195,16 +195,16 @@ int Dutta_Barua_message::_getEncodedSizeNoHash() const
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     enc_size += __int8_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
-    enc_size += __int8_t_encoded_array_size(NULL, this->public_value_size);
+    enc_size += __byte_encoded_array_size(NULL, this->public_value_size);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
-    enc_size += __int8_t_encoded_array_size(NULL, this->sig_size);
+    enc_size += __byte_encoded_array_size(NULL, this->sig_size);
     return enc_size;
 }
 
 uint64_t Dutta_Barua_message::_computeHash(const __lcm_hash_ptr *)
 {
-    uint64_t hash = 0x4abf50c28bb06606LL;
+    uint64_t hash = 0x202c439842b2c023LL;
     return (hash<<1) + ((hash>>63)&1);
 }
 

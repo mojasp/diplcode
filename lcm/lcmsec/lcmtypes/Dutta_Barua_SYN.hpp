@@ -18,7 +18,7 @@ class Dutta_Barua_SYN
 
         int32_t    cert_size;
 
-        std::vector< int8_t > x509_certificate_BER;
+        std::vector< uint8_t > x509_certificate_BER;
 
     public:
         /**
@@ -123,7 +123,7 @@ int Dutta_Barua_SYN::_encodeNoHash(void *buf, int offset, int maxlen) const
     if(tlen < 0) return tlen; else pos += tlen;
 
     if(this->cert_size > 0) {
-        tlen = __int8_t_encode_array(buf, offset + pos, maxlen - pos, &this->x509_certificate_BER[0], this->cert_size);
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->x509_certificate_BER[0], this->cert_size);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -142,7 +142,7 @@ int Dutta_Barua_SYN::_decodeNoHash(const void *buf, int offset, int maxlen)
 
     if(this->cert_size) {
         this->x509_certificate_BER.resize(this->cert_size);
-        tlen = __int8_t_decode_array(buf, offset + pos, maxlen - pos, &this->x509_certificate_BER[0], this->cert_size);
+        tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->x509_certificate_BER[0], this->cert_size);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -154,13 +154,13 @@ int Dutta_Barua_SYN::_getEncodedSizeNoHash() const
     int enc_size = 0;
     enc_size += __int64_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
-    enc_size += __int8_t_encoded_array_size(NULL, this->cert_size);
+    enc_size += __byte_encoded_array_size(NULL, this->cert_size);
     return enc_size;
 }
 
 uint64_t Dutta_Barua_SYN::_computeHash(const __lcm_hash_ptr *)
 {
-    uint64_t hash = 0x34d8f00a87d8dadeLL;
+    uint64_t hash = 0x144a436dca2973efLL;
     return (hash<<1) + ((hash>>63)&1);
 }
 
