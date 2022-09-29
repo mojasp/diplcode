@@ -409,6 +409,7 @@ static lcm_provider_vtable_t tcpq_vtable = {
     .unsubscribe = lcm_tcpq_unsubscribe,
     .publish = lcm_tcpq_publish,
     .handle = lcm_tcpq_handle,
+    .perform_keyexchange = NULL,
     .get_fileno = lcm_tcpq_get_fileno,
 };
 #endif

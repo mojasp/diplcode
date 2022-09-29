@@ -2,14 +2,22 @@
 
 #define EVENTLOOP_H
 
+#include <algorithm>
+#include <chrono>
+#include <cstring>
 #include <functional>
-#include <queue>
+#include <iostream>
+#include <list>
+#include <thread>
 
 #include "lcm-cpp.hpp"
+#include "lcmsec_util.h"
 
 namespace lcmsec_impl {
 /*
  * Brief explanation of the eventloop logic
+ *
+ *    NOTE: THIS IS MOST LIKELY OUTDATED
  *
  * Motivation:
  *  We do need some multitasking because we have to do network IO to perform the
@@ -64,40 +72,108 @@ namespace lcmsec_impl {
  * multiple channels are configured)
  *
  * Right now implemented with a queue. Can be more efficient by using lcm_get_fileno and poll/select
- *
  */
 class eventloop {
-  public:
+public:
     using task_t = std::function<void()>;
-    std::queue<task_t> tasks;
+    using timepoint_t = std::chrono::time_point<std::chrono::steady_clock>;
+    using listelem_t = std::pair<timepoint_t, task_t>;
+  private:
 
-    int lcm_timeout_ms;
+    // linked list as storage, sorted by timepoints
+    // Strictly speaking it is only sorted in the sense that timepoints now are considered equal to
+    // those n the past
+    std::list<listelem_t> tasks;
+
     lcm::LCM &lcm;
 
     int unfinished_channels;
+    std::chrono::milliseconds default_poll_interval;
+
+    inline void handle_tasks()
+    {
+        // Handle next task if it is available
+        auto now = std::chrono::steady_clock::now();
+        while (!tasks.empty() && now > tasks.front().first) {
+            auto t = tasks.front();
+            t.second();
+            tasks.pop_front();
+        }
+    }
+
+    inline void handle_lcm()
+    {
+        int lcm_fd = lcm.getFileno();
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(lcm_fd, &fds);
+
+        auto now = std::chrono::steady_clock::now();
+        auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
+
+        struct timeval timeout = { 
+            std::max<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(next_task_delta).count(), 0),
+            std::max<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(next_task_delta).count(), 0)
+        };//ensure timeouts are not below 0
+        int status = select(lcm_fd + 1, &fds, 0, 0, &timeout);
+        if (status > 0 && FD_ISSET(lcm_fd, &fds)) {
+            // handle incoming messages for the keyexchg protocol
+            lcm.handle();  // guaranteed to be nonblocking
+        }
+        if (status < 0) {
+            throw std::runtime_error("select error: " + std::string(strerror(errno)));
+        }
+    }
 
   public:
     inline eventloop(lcm::LCM &lcm, int lcm_timeout_ms = 50)
-        : lcm(lcm), lcm_timeout_ms(lcm_timeout_ms)
+        : lcm(lcm), default_poll_interval(lcm_timeout_ms)
     {
     }
-    inline void push_task(eventloop::task_t task) { tasks.push(task); }
 
+    inline void push_task(eventloop::task_t task)
+    {
+        auto now = std::chrono::steady_clock::now();
+        tasks.emplace_front(std::make_pair(MOV(now), MOV(task)));
+    }
+
+    inline void push_task(timepoint_t timepoint, eventloop::task_t task)
+    {
+        // keep list sorted while inserting
+        // for clarity: std::lower_bound returns an iterator to the first item for which
+        // (e.first < tp) is false - i.e. the place at which we insert
+        tasks.insert(std::lower_bound(
+                         tasks.begin(), tasks.end(), timepoint,
+                         [](const listelem_t &e, const timepoint_t &tp) { return e.first < tp; }),
+                     std::make_pair(MOV(timepoint), MOV(task)));
+    }
+
+    /*
+     * run until channels are configured - useful for initializing the keyexchange
+     */
     inline void run(int channels_to_configure)
     {
         unfinished_channels = channels_to_configure;
-        while (!tasks.empty() || unfinished_channels > 0) {
-            if (!tasks.empty()) {
-                auto t = tasks.front();
-                t();
-                tasks.pop();
-            }
-            if (unfinished_channels) {
-                lcm.handleTimeout(lcm_timeout_ms);
-            }
+        handle_tasks();
+        do {
+            handle_lcm();
+            handle_tasks();  // Switch order in this case to avoid extra wait on lcm when were
+                             // already done
+        } while (unfinished_channels > 0);
+    }
+
+    /*
+     * run forever - useful for performing keyexchg in background
+     */
+    inline void run()
+    {
+        while (true) {
+            handle_tasks();
+            handle_lcm();
         }
     }
-    inline void channel_finished() {unfinished_channels--;}
+
+    inline void channel_finished() { unfinished_channels--; }
 };
 
 }  // namespace lcmsec_impl

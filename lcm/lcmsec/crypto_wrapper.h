@@ -31,6 +31,15 @@ lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters* params, size
 
 void lcm_destroy_security_ctx (lcm_security_ctx* ctx);
 
+
+/**
+ * @brief performs keyexchange on all available channels
+ *
+ * @param ctx security context
+ * @return 0 on success, 1 on error
+ */
+int lcm_crypto_perform_keyexchange(lcm_security_ctx* ctx);
+
 int lcm_encrypt_channelname(lcm_security_ctx* ctx, uint32_t seqno, const char* ptext, size_t ptextsize, char* ctext, size_t ctextsize);
 
 //returns bytes written or error

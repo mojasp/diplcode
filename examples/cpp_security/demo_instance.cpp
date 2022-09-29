@@ -16,6 +16,7 @@
 #include <lcm/lcm-cpp.hpp>
 #include <list>
 #include <optional>
+#include <thread>
 #include <stdexcept>
 
 #include "exlcm/example_t.hpp"
@@ -183,6 +184,8 @@ int main(int argc, char **argv)
                 setup_channel(channel_config, lcm);
             }
         }
+
+        std::thread kxchg (&lcm::LCM::perform_keyexchange, lcm);
 
         while (true) {
             for (auto &f : sendfunctions) {

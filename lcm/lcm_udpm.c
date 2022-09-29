@@ -237,7 +237,6 @@ static void new_argument(gpointer key, gpointer value, gpointer user)
 static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
 {
     if(!lcm->security_ctx){
-        CRYPTO_DBG("%s\n", "received secured message, but there is no security context configured for this lcm instance. Dropping message...");
         return 0;
     }
     CRYPTO_DBG("%s\n", "receiving secured fragmented message");
@@ -551,7 +550,6 @@ static int _recv_short_message_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int s
 static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 {
     if(!lcm->security_ctx){
-        CRYPTO_DBG("%s\n", "received secured message, but there is no security context configured for this lcm instance. Dropping message");
         return 0;
     }
     lcm2_header_short_secured_t *hdr2 = (lcm2_header_short_secured_t *) lcmb->buf;
@@ -1130,6 +1128,9 @@ static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *da
     return lcm_udpm_publish_secure(lcm, channel, data, datalen);
 }
 
+static int lcm_udpm_perform_keyexchange(lcm_udpm_t *lcm) {
+    return lcm_crypto_perform_keyexchange(lcm->security_ctx);
+}
 
 static int lcm_udpm_handle(lcm_udpm_t *lcm)
 {
@@ -1611,6 +1612,7 @@ static lcm_provider_vtable_t udpm_vtable = {
     .unsubscribe = NULL,
     .publish = lcm_udpm_publish,
     .handle = lcm_udpm_handle,
+    .perform_keyexchange = lcm_udpm_perform_keyexchange,
     .get_fileno = lcm_udpm_get_fileno,
 };
 #endif

@@ -22,13 +22,13 @@
 namespace lcmsec_impl {
 
 // Crypotgraphy for a specific channel or group
-class crypto_ctx {
+class channel_crypto_ctx {
     // Buffers to avoid allocations during runtime
     Botan::secure_vector<uint8_t> IV;  // buffer for IV to avoid allocation during execution
   public:
     const std::string algorithm;
 
-    std::unique_ptr<Key_Exchange_Manager> keyExchangeManager;
+    std::unique_ptr<KeyExchangeLCMHandler> keyExchangeManager;
 
     Botan::secure_vector<uint8_t> salt{0};  // FIXME: think about the salt.
     const uint16_t sender_id;
@@ -39,8 +39,8 @@ class crypto_ctx {
     static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
     static constexpr int KEY_SIZE = 16;  // AES-128 key size.
 
-    explicit crypto_ctx(std::unique_ptr<Key_Exchange_Manager> mgr, uint16_t sender_id,
-                        std::string algorithm)
+    explicit channel_crypto_ctx(std::unique_ptr<KeyExchangeLCMHandler> mgr, uint16_t sender_id,
+                                std::string algorithm)
         : keyExchangeManager(MOV(mgr)), algorithm(MOV(algorithm)), sender_id(sender_id)
     // read sender_id from our own certificate FIXME -> urn parsing
     {
@@ -88,7 +88,7 @@ class crypto_ctx {
 // entrypoint for the cpp implementation of the crypto
 class _lcm_security_ctx {
   public:
-    std::unique_ptr<lcmsec_impl::crypto_ctx> group_ctx;
+    std::unique_ptr<lcmsec_impl::channel_crypto_ctx> group_ctx;
 
   private:
     // Use map with std::string as keys for storage; but compare with char* so we avoid additional
@@ -100,15 +100,22 @@ class _lcm_security_ctx {
         }
     };
 
-    std::map<char *, std::unique_ptr<lcmsec_impl::crypto_ctx>, str_cmp> channel_ctx_map;
+    std::map<char *, std::unique_ptr<lcmsec_impl::channel_crypto_ctx>, str_cmp> channel_ctx_map;
+
+    // separate lcm instance used to perform the key exchange
+    //  FIXME use nondefault instance (respecting initialization parameters)
+    std::unique_ptr<lcm::LCM> lcm;
+
+    lcmsec_impl::eventloop ev_loop;
 
   public:
     _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
+        : lcm(std::make_unique<lcm::LCM>()), ev_loop(*lcm)
     {
         auto &param = *params;
 
         // Usage of constant singleton classes to get global access to the private key and
-        // certificates
+        // certificates in the future - this should probably be changed to something more robust
         lcmsec_impl::DSA_signer::getInst(param.keyfile);
         lcmsec_impl::DSA_verifier::getInst(param.root_ca);
         lcmsec_impl::DSA_certificate_self::getInst(param.certificate);
@@ -116,16 +123,14 @@ class _lcm_security_ctx {
         // Parse our own certificate file to register the proper channels
         //  NOTE: it is probably a good idea to eventually register the channels in a lazy way (upon
         //  subscribe or join()?) - or give the user a choice which channels shall be registered
-        std::string cert_file = param.certificate;
-        Botan::X509_Certificate cert(cert_file);  // FIXME: params not as array
-
-        lcm::LCM lcm;  // FIXME use nondefault instance (respecting initialization parameters)
-
-        lcmsec_impl::eventloop ev_loop(lcm);
+        std::string cert_file = param.certificate;  // FIXME: params not as array
+        Botan::X509_Certificate cert(cert_file);
 
         // Setup group key exchange for the channels for which we have capabilities
         auto capabilities = lcmsec_impl::capability::from_certificate(cert);
-        int channels = capabilities.size();
+        int channels =
+            capabilities.size();  // FIXME Counting by the number of channels is a bit of a hack -
+                                  // rather track by reference to the management instance
         for (auto &cap : MOV(capabilities)) {
             std::string keyxchg_channel;
             if (cap.channelname == std::nullopt) {
@@ -136,23 +141,35 @@ class _lcm_security_ctx {
             }
             std::cout << "cwrap" << cap << std::endl;
             auto keyExchangeManager =
-                std::make_unique<lcmsec_impl::Key_Exchange_Manager>(cap, ev_loop, lcm);
-            lcm.subscribe("lcm://" + keyxchg_channel,
-                          &lcmsec_impl::Key_Exchange_Manager::handleMessage,
-                          keyExchangeManager.get());
-            lcm.subscribe("synlcm://" + keyxchg_channel,
-                          &lcmsec_impl::Key_Exchange_Manager::handle_SYN, keyExchangeManager.get());
+                std::make_unique<lcmsec_impl::KeyExchangeLCMHandler>(cap, ev_loop, *lcm);
+            //FIXME: this is way too hacky, use magic numbers probably or find prefixes that not as insane
+            lcm->subscribe("lcm://" + keyxchg_channel,
+                           &lcmsec_impl::KeyExchangeLCMHandler::handleMessage,
+                           keyExchangeManager.get());
+            lcm->subscribe("joinlcm://" + keyxchg_channel,
+                           &lcmsec_impl::KeyExchangeLCMHandler::handle_JOIN,
+                           keyExchangeManager.get());
+            lcm->subscribe("join_resplcm://" + keyxchg_channel,
+                           &lcmsec_impl::KeyExchangeLCMHandler::handle_JOIN_response,
+                           keyExchangeManager.get());
             if (cap.channelname) {
                 channel_ctx_map[strndup(cap.channelname->c_str(), LCM_MAX_CHANNEL_NAME_LENGTH)] =
-                    std::make_unique<lcmsec_impl::crypto_ctx>(MOV(keyExchangeManager),
-                                                              cap.uid, "AES_128/GCM");
-            } else {
-                group_ctx = std::make_unique<lcmsec_impl::crypto_ctx>(MOV(keyExchangeManager),
+                    std::make_unique<lcmsec_impl::channel_crypto_ctx>(MOV(keyExchangeManager),
                                                                       cap.uid, "AES_128/GCM");
+            } else {
+                group_ctx = std::make_unique<lcmsec_impl::channel_crypto_ctx>(
+                    MOV(keyExchangeManager), cap.uid, "AES_128/GCM");
             }
         }
+        ev_loop.run(1 + channel_ctx_map.size());
+    }
 
-        ev_loop.run(channels);
+    int perform_keyexchange()
+    {
+        // continuously run keyexchange
+        // Note that the listeners are already set up
+        ev_loop.run();
+        return 0;
     }
 
     ~_lcm_security_ctx()
@@ -168,7 +185,7 @@ class _lcm_security_ctx {
         }
     }
 
-    lcmsec_impl::crypto_ctx *get_crypto_ctx(const char *channelname)
+    lcmsec_impl::channel_crypto_ctx *get_crypto_ctx(const char *channelname)
     {
         // cppcheck-suppress cstyleCast
         auto it = channel_ctx_map.find((char *) channelname);
@@ -184,6 +201,12 @@ extern "C" lcm_security_ctx *lcm_create_security_ctx(lcm_security_parameters *pa
     return new _lcm_security_ctx(params, param_len);
 }
 
+extern "C" int lcm_crypto_perform_keyexchange(lcm_security_ctx *ctx)
+{
+    return ctx->perform_keyexchange();
+}
+
+#include <vector>
 extern "C" void lcm_destroy_security_ctx(lcm_security_ctx *ctx)
 {
     delete ctx;

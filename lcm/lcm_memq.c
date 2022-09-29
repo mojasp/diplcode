@@ -159,6 +159,7 @@ static lcm_provider_vtable_t memq_vtable = {
     .unsubscribe = NULL,
     .publish = lcm_memq_publish,
     .handle = lcm_memq_handle,
+    .perform_keyexchange = NULL,
     .get_fileno = lcm_memq_get_fileno,
 };
 #endif

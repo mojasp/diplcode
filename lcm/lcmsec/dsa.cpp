@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "lcmsec/crypto_wrapper.h"
+#include "lcmsec/lcmtypes/Dutta_Barua_cert.hpp"
 
 namespace lcmsec_impl {
 
@@ -29,7 +30,8 @@ bool operator==(const capability &a, const capability &b)
 {
     return a.mcasturl == b.mcasturl && a.channelname == b.channelname && a.uid == b.uid;
 }
-std::ostream& operator<<(std::ostream &stream, const capability& var) {
+std::ostream &operator<<(std::ostream &stream, const capability &var)
+{
     return stream << var.mcasturl << ":" << var.channelname.value_or("null") << ":" << var.uid;
 }
 
@@ -137,47 +139,45 @@ class DSA_verifier::impl {
   public:
     impl(std::string filename) : root_ca(filename) {}
 
-    void add_certificate(const Dutta_Barua_SYN *syn)
+    [[nodiscard]] std::optional<int> add_certificate(const Dutta_Barua_cert &encoded_cert,
+                                                     const std::string &mcastgroup,
+                                                     const std::optional<std::string> channelname)
     {
         Botan::X509_Certificate cert;
-        Botan::BER_Decoder decoder(
-            std::vector<uint8_t>((uint8_t *) syn->x509_certificate_BER.data(),
-                                 (uint8_t *) syn->x509_certificate_BER.data() + syn->cert_size));
+        Botan::BER_Decoder decoder(encoded_cert.x509_certificate_BER);
         cert.decode_from(decoder);
 
         if (!cert.check_signature(root_ca.subject_public_key())) {
-            CRYPTO_DBG("%s", "certificate from SYN INVALID\n");
-            return;
+            CRYPTO_DBG("%s", "certificate from JOIN INVALID\n");
+            return false;
         }
 
+        std::optional<int> uid = {};
         for (auto &cap : capability::from_certificate(cert)) {
-            // Note that certificates are shared_ptr's under the hood, so this works
-            // out nicely in terms of fast lookup times - since we store each cert
-            // "multiple times", but by reference only
+            if (cap.mcasturl == mcastgroup &&
+                (cap.channelname == channelname || (!cap.channelname && !channelname)))
+                uid = cap.uid;
+            // Note that Botan certificates are shared_ptr's under the hood, so this works
+            // out nicely - since we store each cert "multiple times", but by reference only
             certificate_store[MOV(cap)] = cert;
         }
+        return uid;
     }
 
-    /**
-     * @brief return a list of all the participating uid's (from the certificates we have seen
-     * during the SYN phase) for the requested group and channel. This is needed to compute our
-     * neighbour in the group key exchange protocol.
-     *
-     * @param multicast_group group
-     * @param channelname channel
-     * @return vector of participating uids
-     */
-    std::vector<int> participant_uids(std::string multicast_group,
+    std::vector<std::vector<uint8_t>> certificates_for_channel(std::string multicast_group,
                                       std::optional<std::string> channelname) const
     {
-        std::vector<int> uids;
+        std::vector<std::vector<uint8_t>> certificates;
 
+        //Note that while the certificates in our store are not unique (multiple shared_ptr's point to the same certificate), they are unique when considering a single channel
         for (auto &cap : certificate_store) {
             if (cap.first.mcasturl == multicast_group &&
-                (cap.first.channelname == channelname || (!cap.first.channelname && !channelname)))
-                uids.push_back(cap.first.uid);
+                (cap.first.channelname == channelname || (!cap.first.channelname && !channelname))) {
+                auto& certificate = cap.second;
+                certificates.push_back(certificate.BER_encode());
+            }
         }
-        return uids;
+        return certificates; //not expensive, guaranteed RVO
     }
 
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
@@ -232,15 +232,17 @@ DSA_verifier &DSA_verifier::getInst(std::string root_ca)
 
 DSA_verifier::DSA_verifier(std::string filename) : pImpl(std::make_unique<impl>(filename)) {}
 
-void DSA_verifier::add_certificate(const Dutta_Barua_SYN *syn)
+[[nodiscard]] std::optional<int> DSA_verifier::add_certificate(
+    const Dutta_Barua_cert &cert, const std::string &mcastgroup,
+    const std::optional<std::string> channelname)
 {
-    pImpl->add_certificate(syn);
+    return pImpl->add_certificate(cert, mcastgroup, channelname);
 }
 
-std::vector<int> DSA_verifier::participant_uids(std::string multicast_group,
+std::vector<std::vector<uint8_t>> DSA_verifier::certificates_for_channel(std::string multicast_group,
                                                 std::optional<std::string> channelname) const
 {
-    return pImpl->participant_uids(MOV(multicast_group), MOV(channelname));
+    return pImpl->certificates_for_channel(MOV(multicast_group), MOV(channelname));
 }
 
 bool DSA_verifier::db_verify(const Dutta_Barua_message *msg, std::string multicast_group,

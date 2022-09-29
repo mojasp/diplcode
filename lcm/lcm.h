@@ -363,6 +363,9 @@ int lcm_handle(lcm_t *lcm);
 LCM_EXPORT
 int lcm_handle_timeout(lcm_t *lcm, int timeout_millis);
 
+LCM_EXPORT
+int lcm_perform_keyexchange(lcm_t *lcm);
+
 /**
  * @brief Adjusts the maximum number of received messages that can be queued up
  * for a subscription.

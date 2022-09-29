@@ -3,8 +3,8 @@
 #define DSA_H
 
 #include <botan/auto_rng.h>
-#include <botan/x509cert.h>
 #include <botan/pk_keys.h>
+#include <botan/x509cert.h>
 
 #include <iostream>
 #include <map>
@@ -12,18 +12,11 @@
 #include <string>
 #include <unordered_map>
 
-#include "lcmsec/lcmtypes/Dutta_Barua_SYN.hpp"
+#include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
+#include "lcmsec_util.h"
 
 namespace lcmsec_impl {
-
-// static_cast to rvalue reference
-#define MOV(...) \
-  static_cast<std::remove_reference_t<decltype(__VA_ARGS__)>&&>(__VA_ARGS__)
-
-// static_cast to identity
-#define FWD(...) \
-  static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
 
 // sign using ESMSA1 with SHA-256 over secp521r1
 class DSA_signer {
@@ -48,19 +41,21 @@ struct capability {
     std::optional<std::string> channelname;
     int uid;
 
-    inline capability()=default;
-    inline capability(const capability&)=default;
-    inline capability(capability&&)=default;
-    inline capability& operator=(const capability&)=default;
-    inline capability& operator=(capability&&)=default;
-    inline capability(std::string mcasturl, std::optional<std::string>channelname, int uid) :
-         mcasturl(MOV(mcasturl)), channelname(MOV(channelname)), uid(uid) {}
+    inline capability() = default;
+    inline capability(const capability &) = default;
+    inline capability(capability &&) = default;
+    inline capability &operator=(const capability &) = default;
+    inline capability &operator=(capability &&) = default;
+    inline capability(std::string mcasturl, std::optional<std::string> channelname, int uid)
+        : mcasturl(MOV(mcasturl)), channelname(MOV(channelname)), uid(uid)
+    {
+    }
 
     static std::vector<capability> from_certificate(Botan::X509_Certificate &cert);
 };
 bool operator==(const capability &a, const capability &b);
 
-std::ostream& operator<<(std::ostream &stream, const capability& var);
+std::ostream &operator<<(std::ostream &stream, const capability &var);
 
 // verify using ESMSA1 with SHA-256
 class DSA_verifier {
@@ -68,21 +63,26 @@ class DSA_verifier {
     static DSA_verifier &getInst(std::string root_ca = "");
 
     /**
-     * @brief add a the certificate from the SYN message to the internal certificate store (if it is
-     * valid)
+     * @brief add certificate to the internal certificate store if it has been signed by the trusted
+     * authority
+     *
+     * @param join incoming join msg that contains the certificate of the remote
+     * @return uid of the remote for the parameters channelname and mcastgroup if it is contained in
+     * the certificate, nullopt otherwise
      */
-    void add_certificate(const Dutta_Barua_SYN *syn);
+    [[nodiscard]] std::optional<int> add_certificate(const Dutta_Barua_cert &encoded_cert,
+                                                     const std::string &channelname,
+                                                     const std::optional<std::string> mcastgroup);
+
 
     /**
-     * @brief return a list of all the participating uid's (from the certificates we have seen
-     * during the SYN phase) for the requested group and channel. This is needed to compute our
-     * neighbour in the group key exchange protocol.
+     * @brief return all certificates for a given channel
      *
-     * @param multicast_group group
-     * @param channelname channel
-     * @return vector the result is a vector of all participating uids
+     * @param multicast_group the group on which the channel is active
+     * @param channelname channelname
      */
-    std::vector<int> participant_uids(std::string multicast_group, std::optional<std::string> channelname) const;
+    std::vector<std::vector<uint8_t>> certificates_for_channel(std::string multicast_group,
+                                      std::optional<std::string> channelname) const;
 
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
                    std::string channelname);

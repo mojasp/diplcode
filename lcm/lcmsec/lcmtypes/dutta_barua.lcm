@@ -12,9 +12,22 @@ struct Dutta_Barua_message
     byte sig [sig_size];
 }
 
-struct Dutta_Barua_SYN
-{
-    int64_t timestamp_milli;
+struct Dutta_Barua_cert {
     int32_t cert_size;
     byte x509_certificate_BER[cert_size];
 }
+
+struct Dutta_Barua_JOIN
+{
+    int64_t timestamp_r1start_ms;
+    Dutta_Barua_cert certificate;
+}
+
+
+struct Dutta_Barua_JOIN_response 
+{
+    int64_t timestamp_r1start_ms;
+    int32_t participants;
+    Dutta_Barua_cert certificates[participants];
+}
+

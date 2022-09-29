@@ -129,6 +129,8 @@ class LCM {
      */
     inline int handle();
 
+    inline int perform_keyexchange();
+
     /**
      * @brief Waits for and dispatches messages, with a timeout.
      *

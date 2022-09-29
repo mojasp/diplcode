@@ -225,6 +225,17 @@ int lcm_handle(lcm_t *lcm)
         return -1;
 }
 
+int lcm_perform_keyexchange(lcm_t *lcm){
+    if (lcm->provider && lcm->vtable->handle) {
+        int ret = lcm->vtable->perform_keyexchange(lcm->provider);
+        return ret;
+    }
+    else {
+        fprintf(stderr, "No security context for LCM instance, cannot perform key exchange\n");
+        return -1;
+    }
+}
+
 int lcm_handle_timeout(lcm_t *lcm, int timeout_milis)
 {
     fd_set fds;

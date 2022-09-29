@@ -39,6 +39,7 @@ struct _lcm_provider_vtable_t {
     int (*unsubscribe)(lcm_provider_t *, const char *channel);
     int (*publish)(lcm_provider_t *, const char *, const void *, unsigned int);
     int (*handle)(lcm_provider_t *);
+    int (*perform_keyexchange)(lcm_provider_t *);
     int (*get_fileno)(lcm_provider_t *);
 };
 

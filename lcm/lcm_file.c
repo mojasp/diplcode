@@ -361,6 +361,7 @@ static lcm_provider_vtable_t logprov_vtable = {
     .unsubscribe = NULL,
     .publish = lcm_logprov_publish,
     .handle = lcm_logprov_handle,
+    .perform_keyexchange = NULL,
     .get_fileno = lcm_logprov_get_fileno,
 };
 #endif
