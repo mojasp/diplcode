@@ -22,7 +22,7 @@ namespace lcmsec_impl {
 class DSA_signer {
   private:
     Botan::AutoSeeded_RNG rng;
-    const std::unique_ptr<const Botan::Private_Key> key;
+    std::unique_ptr<const Botan::Private_Key> key;
 
     explicit DSA_signer(std::string keyfile);
 

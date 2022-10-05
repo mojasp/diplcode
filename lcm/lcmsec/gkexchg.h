@@ -63,7 +63,7 @@ class Dutta_Barua_GKE {
     struct user_id {
         int u, d;
     };
-    const user_id uid;
+    user_id uid;
 
     // stateful members needed across multiple rounds of the keyexchange //
     std::vector<int> joining_participants;
@@ -133,17 +133,17 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
 
-    const std::string
+    std::string
         groupexchg_channelname;  // the channelname used for the management of the keyexchange
 
     // Not used for publishing, but to check permissions of the certificates on incoming messages
-    const std::optional<std::string> channelname;
-    const std::string mcastgroup;
+    std::optional<std::string> channelname;
+    std::string mcastgroup;
 
-    const std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
+    std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
         125);  // delay start of round1 after the first join() by this time
-    const std::chrono::milliseconds JOIN_rebroadcast_interval = std::chrono::milliseconds(50);
-    const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
+    std::chrono::milliseconds JOIN_rebroadcast_interval = std::chrono::milliseconds(50);
+    std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
     std::optional<std::chrono::steady_clock::time_point> current_earliest_r1start = {};
 
     [[nodiscard]] inline STATE &getState() override { return state; }

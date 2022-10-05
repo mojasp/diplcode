@@ -26,13 +26,13 @@ class channel_crypto_ctx {
     // Buffers to avoid allocations during runtime
     Botan::secure_vector<uint8_t> IV;  // buffer for IV to avoid allocation during execution
   public:
-    const std::string algorithm;
+    std::string algorithm;
 
     std::unique_ptr<KeyExchangeLCMHandler> keyExchangeManager;
 
     Botan::secure_vector<uint8_t> salt{0};  // FIXME: think about the salt.
-    const uint16_t sender_id;
-    std::optional<const Botan::secure_vector<uint8_t>>
+    uint16_t sender_id;
+    std::optional<Botan::secure_vector<uint8_t>>
         key;  // caching the key derivation to improve performance. This needs to be done in the
               // manager class when/if we want rekeying
 
