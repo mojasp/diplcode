@@ -164,17 +164,17 @@ class DSA_verifier::impl {
         return uid;
     }
 
-    std::vector<std::vector<uint8_t>> certificates_for_channel(std::string multicast_group,
+    std::vector<std::pair<int, std::vector<uint8_t>>> certificates_for_channel(std::string multicast_group,
                                       std::optional<std::string> channelname) const
     {
-        std::vector<std::vector<uint8_t>> certificates;
+        std::vector<std::pair<int, std::vector<uint8_t>>> certificates;
 
         //Note that while the certificates in our store are not unique (multiple shared_ptr's point to the same certificate), they are unique when considering a single channel
         for (auto &cap : certificate_store) {
             if (cap.first.mcasturl == multicast_group &&
                 (cap.first.channelname == channelname || (!cap.first.channelname && !channelname))) {
                 auto& certificate = cap.second;
-                certificates.push_back(certificate.BER_encode());
+                certificates.emplace_back(std::make_pair(cap.first.uid, certificate.BER_encode()));
             }
         }
         return certificates; //not expensive, guaranteed RVO
@@ -239,7 +239,7 @@ DSA_verifier::DSA_verifier(std::string filename) : pImpl(std::make_unique<impl>(
     return pImpl->add_certificate(cert, mcastgroup, channelname);
 }
 
-std::vector<std::vector<uint8_t>> DSA_verifier::certificates_for_channel(std::string multicast_group,
+std::vector<std::pair<int, std::vector<uint8_t>>> DSA_verifier::certificates_for_channel(std::string multicast_group,
                                                 std::optional<std::string> channelname) const
 {
     return pImpl->certificates_for_channel(MOV(multicast_group), MOV(channelname));

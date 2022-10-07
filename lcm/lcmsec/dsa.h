@@ -81,7 +81,7 @@ class DSA_verifier {
      * @param multicast_group the group on which the channel is active
      * @param channelname channelname
      */
-    std::vector<std::vector<uint8_t>> certificates_for_channel(std::string multicast_group,
+    std::vector<std::pair<int, std::vector<uint8_t>>> certificates_for_channel(std::string multicast_group,
                                       std::optional<std::string> channelname) const;
 
     bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,

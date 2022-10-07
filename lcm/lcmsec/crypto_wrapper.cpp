@@ -25,7 +25,7 @@ namespace lcmsec_impl {
 class channel_crypto_ctx {
     // Buffers to avoid allocations during runtime
     Botan::secure_vector<uint8_t> IV;  // buffer for IV to avoid allocation during execution
-  public:
+
     std::string algorithm;
 
     std::unique_ptr<KeyExchangeLCMHandler> keyExchangeManager;
@@ -38,6 +38,9 @@ class channel_crypto_ctx {
 
     static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
     static constexpr int KEY_SIZE = 16;  // AES-128 key size.
+
+  public:
+    int getSenderID() {return sender_id;}
 
     explicit channel_crypto_ctx(std::unique_ptr<KeyExchangeLCMHandler> mgr, uint16_t sender_id,
                                 std::string algorithm)
@@ -69,11 +72,8 @@ class channel_crypto_ctx {
     template <typename Cipher>
     void set_cipher_key(Cipher &cipher)
     {
-        if (!key)
-            key.emplace(keyExchangeManager->get_session_key(KEY_SIZE));
-
-        // std::cout << "ch: " << keyExchangeManager->channelname() << "key: " <<
-        // Botan::hex_encode(*key) << std::endl;
+        if (!key || keyExchangeManager->hasNewKey())
+            key = keyExchangeManager->get_session_key(KEY_SIZE);
 
         cipher.set_key(&(key->operator[](0)), key->size());
     }
@@ -338,5 +338,5 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
 extern "C" uint16_t get_sender_id_from_cryptoctx(lcm_security_ctx *ctx, const char *channelname)
 {
     assert(ctx->get_crypto_ctx(channelname));
-    return ctx->get_crypto_ctx(channelname)->sender_id;
+    return ctx->get_crypto_ctx(channelname)->getSenderID();
 }

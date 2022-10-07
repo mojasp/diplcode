@@ -4,6 +4,7 @@
 #include <botan/bigint.h>
 #include <botan/dh.h>
 
+#include <cassert>
 #include <map>
 #include <optional>
 #include <string>
@@ -31,7 +32,7 @@ class Dutta_Barua_GKE {
     virtual ~Dutta_Barua_GKE();
 
   public:
-    enum class STATE {
+    enum class STATE : int {
         keyexchg_not_started = 0,
         round1_done,
         keyexchg_successful,
@@ -48,9 +49,24 @@ class Dutta_Barua_GKE {
         return STATE_names[static_cast<int>(s)];
     }
 
+    enum class JOIN_ROLE : int { 
+        joining = 0, 
+        active, 
+        passive, 
+        ENUMSIZE };
+    inline const char *join_role_name(JOIN_ROLE r)
+    {
+        static const char *join_role_names[] = {"joining", "active", "passive"};
+        static_assert(
+            sizeof(join_role_names) / sizeof(char *) == static_cast<int>(JOIN_ROLE::ENUMSIZE),
+            "sizes dont match");
+        return join_role_names[static_cast<int>(r)];
+    }
+
     virtual void sign_and_dispatch(Dutta_Barua_message &msg) = 0;
     virtual void gkexchg_finished() = 0;          // hook for child to override
     [[nodiscard]] virtual STATE &getState() = 0;  // hook for child to override
+    [[nodiscard]] virtual inline JOIN_ROLE &getRole() = 0;
 
     void round1();
     void round2();
@@ -80,8 +96,7 @@ class Dutta_Barua_GKE {
 
     std::vector<user_id> partial_session_id;
 
-    std::optional<Botan::BigInt>
-        x_i;  // no default constructor for DH_PrivateKey and it cannot be immediately initialized
+    std::optional<Botan::BigInt> x_i;
     static constexpr int group_bitsize = 4096;
     Botan::DL_Group group{"modp/ietf/" + std::to_string(group_bitsize)};
 
@@ -92,6 +107,7 @@ class Dutta_Barua_GKE {
     } r1_messages;
 
     std::optional<Botan::BigInt> shared_secret;
+    bool has_new_key; //FIXME synchronization?
 
     virtual void debug(std::string msg) = 0;
 
@@ -99,11 +115,13 @@ class Dutta_Barua_GKE {
     // Map virtual user ids (counting - sequentially - all the user ID's that are participating in
     // the protocol) to the real ones (the ones that are configured in the certificates, and are
     // part of the messages that are transmitted) NOTE: both use 1-indexing
+    //
+    // THIS METHOD AS IT STANDS MAY ONLY BE CALLED WITH VALID UID's
     inline int uid_to_protocol_uid(int uid)
     {
         auto it = std::lower_bound(joining_participants.cbegin(), joining_participants.cend(),
                                    uid);  // take advantage of sorted array and do a binary search
-        if (it == joining_participants.end()) {
+        if (it == joining_participants.cend()) {
             throw std::runtime_error("error: found no protocol uid for uid " + std::to_string(uid));
         } else
             return it - joining_participants.begin() +
@@ -129,7 +147,16 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     void on_msg(const Dutta_Barua_message *msg);
 
+    inline bool hasNewKey() {
+        if(has_new_key) {
+            has_new_key = false;
+            return true;
+        }
+        return false;
+    }
+
     STATE state{STATE::keyexchg_not_started};
+    JOIN_ROLE role;
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
 
@@ -146,7 +173,13 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
     std::optional<std::chrono::steady_clock::time_point> current_earliest_r1start = {};
 
-    [[nodiscard]] inline STATE &getState() override { return state; }
+    [[nodiscard]] virtual inline STATE &getState() override { return state; }
+
+    [[nodiscard]] virtual inline JOIN_ROLE &getRole() override
+    {
+        assert(state == Dutta_Barua_GKE::STATE::join_in_progress);
+        return role;
+    }
 
   private:
     eventloop &evloop;
@@ -188,6 +221,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         state = STATE::keyexchg_successful;
         evloop.channel_finished();
         current_earliest_r1start = std::nullopt;
+        has_new_key = true;
     }
 
     std::chrono::steady_clock::time_point &earliest_time(
@@ -213,7 +247,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     std::chrono::steady_clock::time_point conditionally_create_r1_task(
         std::chrono::steady_clock::time_point &tp)
     {
-        return conditionally_create_task(tp, [this]{round1();});
+        return conditionally_create_task(tp, [this] { round1(); });
     }
 };
 
@@ -233,6 +267,10 @@ class KeyExchangeLCMHandler {
     void handle_JOIN_response(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                               const Dutta_Barua_JOIN_response *join_response);
 
+
+    bool hasNewKey() {
+        return impl.hasNewKey();
+    }
     /*
      * deleted copy and move constructors
      * This is important since this class will be used as an lcm handler object. Thus, its

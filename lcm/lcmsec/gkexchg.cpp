@@ -10,6 +10,7 @@
 #include <botan/pkix_types.h>
 #include <botan/pubkey.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <numeric>
 
@@ -155,6 +156,7 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
 
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
+    if(role == Dutta_Barua_GKE::JOIN_ROLE::passive) return;
     // Check first whether or not the message is meant for us - quick bailout so we avoid checking
     // the signature in some cases.
     if (msg->round == 1 && !is_neighbour(msg))
@@ -235,17 +237,23 @@ void KeyExchangeManager::JOIN_response(int64_t requested_r1start)
     }
     debug("dispatching join_resp");
 
-    // FIXME: ADD OUR OWN CERTIFICATE! - or do we? we need to sign the message though! if we do the
-    // remote will have our cert
-
     Dutta_Barua_JOIN_response response;
 
-    for (auto &cert :
+    for (auto &[uid, cert] :
          MOV(DSA_verifier::getInst().certificates_for_channel(mcastgroup, channelname))) {
         Dutta_Barua_cert db_cert;
         db_cert.cert_size = cert.size();
         db_cert.x509_certificate_BER = MOV(cert);
-        response.certificates.push_back(MOV(db_cert));
+        // Only send the certificates of the members that are part of the active group
+        // The certificates that we added from join_requests are not needed:
+        //   if we send the full vector of participants certificates(joining + existing),
+        //   the remote can only separate them if he already knows the vector of joining
+        //   particpiants (by seeing the join's himself) it would be possible to send both vectors
+        //   separately; this is an optimization opportunity (correcting missed join's in some
+        //   cases, maybe get rid of repeated joins)
+
+        if (!std::binary_search(joining_participants.begin(), joining_participants.end(), uid))
+            response.certificates.push_back(MOV(db_cert));
     }
     response.participants = response.certificates.size();
 
@@ -272,19 +280,22 @@ static void add_participant(std::vector<int> &participants, int remote_uid)
 
 void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_response)
 {
+    // FIXME get out common logic
     switch (state) {
     case Dutta_Barua_GKE::STATE::keyexchg_not_started: {
         auto &verifier = DSA_verifier::getInst();
         for (const auto &cert : join_response->certificates) {
             auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
-            if (!uid)
-                return;
+            if (!uid) {
+                throw std::runtime_error("certificate contained in received join_response invalid");
+            }
             add_participant(participants, *uid);
         }
 
         // add earlier start to the join phsae in case it is required
         std::chrono::steady_clock::time_point requested_r1start{
             std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
+        prepare_join();
         current_earliest_r1start =
             conditionally_create_task(requested_r1start, [this] { join_new(); });
         state = Dutta_Barua_GKE::STATE::join_in_progress;
@@ -294,6 +305,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
         // FIXME: this is problematic if the timestamps are not signed - DOS
         last_answered_join = std::chrono::steady_clock::now();
 
+        prepare_join();
         // add earlier start to the join phase in case it is required
         std::chrono::steady_clock::time_point requested_r1start{
             std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
@@ -301,7 +313,6 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
             conditionally_create_task(requested_r1start, [this] { join_existing(); });
         state = Dutta_Barua_GKE::STATE::join_in_progress;
 
-        prepare_join();
     } break;
     default:;
         // ignore join responses in the middle of a running keyexchange
@@ -336,6 +347,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
         // dispatch JOIN_response at a random time
         using namespace std::chrono;
         int avgdelay_count_us = duration_cast<microseconds>(JOIN_response_avg_delay).count();
+        srand(std::chrono::system_clock::now().time_since_epoch().count());
         int us_offset = (std::rand() % 2 * avgdelay_count_us) - avgdelay_count_us;
         auto response_timepoint = steady_clock::now() + microseconds(us_offset);
 
@@ -356,10 +368,11 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 void Dutta_Barua_GKE::round1()
 {
     switch (getState()) {
-    case STATE::keyexchg_not_started: //fallthrough
-    case STATE::join_in_progress:
+    case STATE::keyexchg_not_started:  // fallthrough
         break;
-    default: return; //avoid accidentally starting round1 multiple times - this would happen since it is very possible that multiple round1 tasks are queued up.
+    default:
+        return;  // avoid accidentally starting round1 multiple times - this would happen since it
+                 // is very possible that multiple round1 tasks are queued up.
     }
     std::sort(joining_participants.begin(),
               joining_participants.end());  // FIXME do this in a better way
@@ -376,7 +389,8 @@ void Dutta_Barua_GKE::round1()
         user_id{uid_to_protocol_uid(uid.u),
                 uid.d});  // initialize the partial session id with the *protocol_user_id*
 
-    if(!x_i) {
+    if (!x_i) {  // In the join phase, x_i might have to be preinitialized.
+        // Only generate a new x_i in case it doesn't exist
         Botan::AutoSeeded_RNG rng;
         auto privkey = Botan::DH_PrivateKey(rng, group);
         x_i = privkey.get_x();
@@ -403,6 +417,7 @@ void Dutta_Barua_GKE::round1()
 void Dutta_Barua_GKE::round2()
 {
     assert(r1_messages.left && r1_messages.right);
+    assert(!r2_finished);
     auto &msgleft = r1_messages.left;
     auto &msgright = r1_messages.right;
 
@@ -493,21 +508,24 @@ void Dutta_Barua_GKE::computeKey()
 
 void Dutta_Barua_GKE::prepare_join()
 {
-    if (getState() != STATE::join_in_progress) {
-        debug("prepare_join: wrong state: " + std::string(state_name(getState())) + ", exiting..");
-        return;
-    }
-
     // Cleanup any intermediate stuff
     r1_results.left.clear();
     r1_results.right.clear();
+    r1_messages.left = {};
+    r1_messages.right = {};
+
     r2_finished = false;
     r2_messages.clear();
+
+    auto mgr = dynamic_cast<KeyExchangeManager *>(this);  // probably just implement this in parent
+    assert(mgr);
+    mgr->current_earliest_r1start = {};
 }
+
 void Dutta_Barua_GKE::join_existing()
 {
     if (getState() != STATE::join_in_progress) {
-        debug("prepare_join: wrong state: " + std::string(state_name(getState())) + ", exiting..");
+        debug("join_existing: wrong state: " + std::string(state_name(getState())) + ", exiting..");
         return;
     }
 
@@ -524,21 +542,32 @@ void Dutta_Barua_GKE::join_existing()
             std::unique(joining_participants.begin(), joining_participants.end()),
             joining_participants.end());
         participants.clear();
+        prepare_join();
+        x_i.reset();
         getState() = STATE::keyexchg_not_started;
         return round1();
     }
 
-    joining_participants.insert(joining_participants.begin(), participants.begin(), participants.begin() + 3);
-    int our_proto_uid = uid_to_protocol_uid(uid.u);
-    if(our_proto_uid == 2) {
-        //initialize x_i from shared_secret 
-        //WIP 
-        //FIXME this is incorrect, should be that members x_1 x_2 and x_n are active, not - like i did it here - x1,x2,x3
-        auto& g = group.get_g();
-        auto Y = Botan::power_mod(g, shared_secret.value(), group.get_p());
+    joining_participants.insert(joining_participants.begin(), participants.back());
+    joining_participants.insert(joining_participants.begin(), *(participants.begin() + 1));
+    joining_participants.insert(joining_participants.begin(), participants.front());
+
+    bool first = participants.front() == uid.u;
+    bool second = participants[1] == uid.u;
+    bool last = participants.back() == uid.u;
+
+    if (second) {
+        // initialize x_i from shared_secret instead FIXME hash
+        x_i = shared_secret;
     }
-    if(our_proto_uid==1 && our_proto_uid == 3) //execute group key agreement normally 
-    {}
+
+    if (first || second || last) {
+        getRole() = JOIN_ROLE::active;
+        debug("join:active r1 started");
+        getState() = STATE::keyexchg_not_started;
+        return round1();
+    } else
+        getRole() = JOIN_ROLE::passive;
 }
 void Dutta_Barua_GKE::join_new()
 {
@@ -560,10 +589,14 @@ void Dutta_Barua_GKE::join_new()
             std::unique(joining_participants.begin(), joining_participants.end()),
             joining_participants.end());
         participants.clear();
-        getState()=STATE::keyexchg_not_started;
-        round1();
+        getState() = STATE::keyexchg_not_started;
+        return round1();
     }
-    joining_participants.insert(joining_participants.begin(), participants.begin(), participants.begin() + 3);
+    joining_participants.insert(joining_participants.begin(), participants.back());
+    joining_participants.insert(joining_participants.begin(), *(participants.begin() + 1));
+    joining_participants.insert(joining_participants.begin(), participants.front());
+
+    getState() = STATE::keyexchg_not_started;
     round1();
 }
 
