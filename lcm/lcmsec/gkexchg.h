@@ -50,13 +50,14 @@ class Dutta_Barua_GKE {
     }
 
     enum class JOIN_ROLE : int { 
-        joining = 0, 
+        invalid = 0,
+        joining,
         active, 
         passive, 
         ENUMSIZE };
     inline const char *join_role_name(JOIN_ROLE r)
     {
-        static const char *join_role_names[] = {"joining", "active", "passive"};
+        static const char *join_role_names[] = {"invalid", "joining", "active", "passive"};
         static_assert(
             sizeof(join_role_names) / sizeof(char *) == static_cast<int>(JOIN_ROLE::ENUMSIZE),
             "sizes dont match");
@@ -71,6 +72,7 @@ class Dutta_Barua_GKE {
     void round1();
     void round2();
     void computeKey();
+    void computeKey_passive();
 
     void prepare_join();
     void join_existing();
@@ -156,7 +158,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     }
 
     STATE state{STATE::keyexchg_not_started};
-    JOIN_ROLE role;
+    JOIN_ROLE role{JOIN_ROLE::invalid};
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
 
@@ -177,7 +179,6 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() override
     {
-        assert(state == Dutta_Barua_GKE::STATE::join_in_progress);
         return role;
     }
 
@@ -219,6 +220,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     inline void gkexchg_finished() override
     {
         state = STATE::keyexchg_successful;
+        role = Dutta_Barua_GKE::JOIN_ROLE::invalid;
         evloop.channel_finished();
         current_earliest_r1start = std::nullopt;
         has_new_key = true;

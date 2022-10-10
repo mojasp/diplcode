@@ -156,40 +156,79 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
 
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
-    if(role == Dutta_Barua_GKE::JOIN_ROLE::passive) return;
-    // Check first whether or not the message is meant for us - quick bailout so we avoid checking
-    // the signature in some cases.
-    if (msg->round == 1 && !is_neighbour(msg))
-        return;
-
-    auto &verifier = DSA_verifier::getInst();
-    if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
-        debug("signature verification failed");
-        return;
-    }
-
-    if (msg->round == 1) {
-        // Note: it is intended that in the case of two participants, both of the conditions hold;
-        // i.e. the 2-party case is just a special case of the key exchange algorithm
-        if (is_left_neighbour(msg))
-            r1_messages.left = *msg;
-        if (is_right_neighbour(msg))
-            r1_messages.right = *msg;
-    } else {
-        if (msg->round != 2) {
-            auto error = "keyexchange on channel " + groupexchg_channelname +
-                         " failed: faulty message (msg->round) but valid signature";
-            throw std::runtime_error(error);
+    if (role == Dutta_Barua_GKE::JOIN_ROLE::passive) {
+        auto remote_proto_uid = uid_to_protocol_uid(msg->u);
+        int left = 1;
+        int right = 3;
+        if (msg->round == 1) {
+            if (remote_proto_uid != left && remote_proto_uid != right)
+                return;  // we only care about 1 and 3
         }
-        r2_messages[uid_to_protocol_uid(msg->u)] = *msg;
-    }
 
-    // Check prerequisites for next round
-    if (!r2_finished && r1_messages.left && r1_messages.right) {
-        evloop.push_task([this] { round2(); });
-    }
-    if (r2_finished && r2_messages.size() == joining_participants.size()) {
-        evloop.push_task([this] { computeKey(); });
+        auto &verifier = DSA_verifier::getInst();
+        if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
+            debug("signature verification failed");
+            return;
+        }
+
+        if (msg->round == 1) {
+            if (remote_proto_uid == left)
+                r1_messages.left = *msg;
+            else if (remote_proto_uid == right)
+                r1_messages.right = *msg;
+            else
+                assert(false);  /// unreachable
+        } else {
+            if (msg->round != 2) {
+                auto error = "keyexchange on channel " + groupexchg_channelname +
+                             " failed: faulty message (msg->round) but valid signature";
+                throw std::runtime_error(error);
+            }
+            r2_messages[uid_to_protocol_uid(msg->u)] = *msg;
+        }
+
+        if (r1_messages.left && r1_messages.right &&
+            r2_messages.size() == joining_participants.size()) {
+            // If we have everything we can immediately compute the key
+            round2();
+            computeKey_passive();
+        }
+    } else {
+        // Check first whether or not the message is meant for us - quick bailout so we avoid
+        // checking the signature in some cases.
+        if (msg->round == 1 && !is_neighbour(msg))
+            return;
+
+        auto &verifier = DSA_verifier::getInst();
+        if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
+            debug("signature verification failed");
+            return;
+        }
+
+        if (msg->round == 1) {
+            // Note: it is intended that in the case of two participants, both of the conditions
+            // hold; i.e. the 2-party case is just a special case of the group key exchange
+            // algorithm
+            if (is_left_neighbour(msg))
+                r1_messages.left = *msg;
+            if (is_right_neighbour(msg))
+                r1_messages.right = *msg;
+        } else {
+            if (msg->round != 2) {
+                auto error = "keyexchange on channel " + groupexchg_channelname +
+                             " failed: faulty message (msg->round) but valid signature";
+                throw std::runtime_error(error);
+            }
+            r2_messages[uid_to_protocol_uid(msg->u)] = *msg;
+        }
+
+        // Check prerequisites for next round
+        if (!r2_finished && r1_messages.left && r1_messages.right) {
+            evloop.push_task([this] { round2(); });
+        }
+        if (r2_finished && r2_messages.size() == joining_participants.size()) {
+            evloop.push_task([this] { computeKey(); });
+        }
     }
 }
 
@@ -201,8 +240,8 @@ void KeyExchangeManager::JOIN()
         return;
     }
     Dutta_Barua_JOIN join;
-    // FIXME: consistent r1start - use helper function, make this actually correct - behaviour is
-    // already correct but code confusing
+    // FIXME: consistent r1start - use helper function, make this actually correct - behaviour
+    // is already correct but code confusing
     auto requested_r1start = std::chrono::steady_clock::now() + JOIN_waitperiod;
     auto requested_r1start_ms =
         std::chrono::time_point_cast<std::chrono::milliseconds>(requested_r1start);
@@ -226,8 +265,8 @@ void KeyExchangeManager::JOIN()
  */
 void KeyExchangeManager::JOIN_response(int64_t requested_r1start)
 {
-    // Skip answering the join if there has already been an answer since the remote started sending
-    // join's
+    // Skip answering the join if there has already been an answer since the remote started
+    // sending join's
     std::chrono::steady_clock::time_point requested_starting_time{
         std::chrono::milliseconds(requested_r1start)};
     auto remote_began_sending = requested_starting_time - JOIN_waitperiod;
@@ -248,9 +287,9 @@ void KeyExchangeManager::JOIN_response(int64_t requested_r1start)
         // The certificates that we added from join_requests are not needed:
         //   if we send the full vector of participants certificates(joining + existing),
         //   the remote can only separate them if he already knows the vector of joining
-        //   particpiants (by seeing the join's himself) it would be possible to send both vectors
-        //   separately; this is an optimization opportunity (correcting missed join's in some
-        //   cases, maybe get rid of repeated joins)
+        //   particpiants (by seeing the join's himself) it would be possible to send both
+        //   vectors separately; this is an optimization opportunity (correcting missed join's
+        //   in some cases, maybe get rid of repeated joins)
 
         if (!std::binary_search(joining_participants.begin(), joining_participants.end(), uid))
             response.certificates.push_back(MOV(db_cert));
@@ -352,9 +391,9 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
         auto response_timepoint = steady_clock::now() + microseconds(us_offset);
 
         // it is very important to name this variable.
-        // if it is unnamed, join_msg will be captured by value, instead of only the member - this
-        // is problematic, because join_msg will not be pointing to valid memory in the future (its
-        // lifetime is managed by LCM)
+        // if it is unnamed, join_msg will be captured by value, instead of only the member -
+        // this is problematic, because join_msg will not be pointing to valid memory in the
+        // future (its lifetime is managed by LCM)
         int requested_r1start = join_msg->timestamp_r1start_ms;
 
         evloop.push_task(response_timepoint, [=] { JOIN_response(requested_r1start); });
@@ -371,8 +410,8 @@ void Dutta_Barua_GKE::round1()
     case STATE::keyexchg_not_started:  // fallthrough
         break;
     default:
-        return;  // avoid accidentally starting round1 multiple times - this would happen since it
-                 // is very possible that multiple round1 tasks are queued up.
+        return;  // avoid accidentally starting round1 multiple times - this would happen since
+                 // it is very possible that multiple round1 tasks are queued up.
     }
     std::sort(joining_participants.begin(),
               joining_participants.end());  // FIXME do this in a better way
@@ -402,8 +441,8 @@ void Dutta_Barua_GKE::round1()
 
     Dutta_Barua_message msg;
 
-    // For sending messages; use the true user_ids that correspond to the capabilities configured in
-    // the protocol
+    // For sending messages; use the true user_ids that correspond to the capabilities
+    // configured in the protocol
     msg.u = this->uid.u;
     msg.round = 1;
     db_set_public_value(msg, X);
@@ -433,19 +472,73 @@ void Dutta_Barua_GKE::round2()
     assert(r1_results.right != 0);
     assert(r1_results.left != 0);
 
-    auto leftkey_inverse = Botan::inverse_mod(r1_results.left, group.get_p());
-    Botan::BigInt Y = (r1_results.right * leftkey_inverse) % group.get_p();
+    if (getRole() != JOIN_ROLE::passive) {
+        auto leftkey_inverse = Botan::inverse_mod(r1_results.left, group.get_p());
+        Botan::BigInt Y = (r1_results.right * leftkey_inverse) % group.get_p();
 
-    assert(Y != 0);
-    Dutta_Barua_message msg;
-    msg.u = uid.u;
-    msg.round = 2;
-    db_set_public_value(msg, Y);
-    msg.d = uid.d;
+        assert(Y != 0);
+        Dutta_Barua_message msg;
+        msg.u = uid.u;
+        msg.round = 2;
+        db_set_public_value(msg, Y);
+        msg.d = uid.d;
 
-    sign_and_dispatch(msg);
-
+        sign_and_dispatch(msg);
+    }
     r2_finished = true;
+}
+
+void Dutta_Barua_GKE::computeKey_passive() {
+    std::map<int, Botan::BigInt> right_keys;
+
+    auto wrapindex = [sz=joining_participants.size()](int i) {
+        return ((i - 1) % sz )+
+               1;  // wraparound respecting 1-indexing of dutta barua paper
+    };
+    // we can immediately add our own right key (computed from the previous round)
+    int protocol_uid = 2;
+    right_keys[protocol_uid] = Botan::BigInt(r1_results.right);
+
+    Botan::BigInt current_rightkey = r1_results.right;
+
+    Botan::BigInt Y;
+    db_get_public_value(r2_messages[wrapindex(protocol_uid + 1)], Y);
+
+    current_rightkey = (Y * current_rightkey) % group.get_p();
+    right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
+
+    for (int i = 2; i <= joining_participants.size() - 1; i++) {
+        int idx = wrapindex(i + protocol_uid);
+        assert(r2_messages.count(idx) == 1);
+        db_get_public_value(r2_messages[idx], Y);
+        current_rightkey = (Y * current_rightkey) % group.get_p();
+
+        right_keys[idx] = Botan::BigInt(current_rightkey);
+    }
+
+    // correctness check
+    int lastindex = wrapindex(protocol_uid + joining_participants.size() - 1);
+    bool correctness = right_keys[lastindex] == r1_results.left;
+    if (correctness)
+        debug("group key exchange successful!");
+    else {
+        debug("key computation correctness check failed");
+        return;  // FIXME failure should be signaled in some form is actionable for the
+                 // consumer of the API
+    }
+    shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
+                                    [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
+                                        return (acc * value.second) % group.get_p();
+                                    });
+
+    using namespace std;
+    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
+    // endl;
+
+    participants = MOV(joining_participants);
+    joining_participants.clear();
+    gkexchg_finished();
+    
 }
 
 void Dutta_Barua_GKE::computeKey()
@@ -453,8 +546,8 @@ void Dutta_Barua_GKE::computeKey()
     for (auto &[i, incoming] : r2_messages) {
         partial_session_id.push_back(user_id{uid_to_protocol_uid(incoming.u), incoming.d});
     }
-    auto wrapindex = [=](int i) {
-        return ((i - 1) % joining_participants.size()) +
+    auto wrapindex = [sz=joining_participants.size()](int i) {
+        return ((i - 1) % sz) +
                1;  // wraparound respecting 1-indexing of dutta barua paper
     };
 
@@ -556,11 +649,10 @@ void Dutta_Barua_GKE::join_existing()
     bool second = participants[1] == uid.u;
     bool last = participants.back() == uid.u;
 
-    if (second) {
+    if (!first && !last) {
         // initialize x_i from shared_secret instead FIXME hash
         x_i = shared_secret;
     }
-
     if (first || second || last) {
         getRole() = JOIN_ROLE::active;
         debug("join:active r1 started");
