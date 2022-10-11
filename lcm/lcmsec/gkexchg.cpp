@@ -670,7 +670,7 @@ void Dutta_Barua_GKE::join_new()
 
     debug("join from new group member");
 
-    if (participants.size() <= 3) {
+    if (participants.size() < 3) {
         // need a group of more than 3 participants to perform the dynamic version of the
         // keyexchange
         debug("existing group small: reform group instead of joining");
