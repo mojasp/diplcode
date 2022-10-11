@@ -388,7 +388,7 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
 static int _recv_message_fragment_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint32_t sz)
 {
     if(lcm->security_ctx) {
-        CRYPTO_DBG("%s\n", "received unsecured message, but lcm is initiated with security enabled. Dropping message...\n");
+        //received unsecured message, but lcm is initiated with security enabled. Dropping message..
         return 0;
     }
     lcm2_header_long_t *hdr = (lcm2_header_long_t *) lcmb->buf;
@@ -521,7 +521,7 @@ static int _recv_short_message_unsecured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int s
 
     int is_self_test = strncmp(pkt_channel_str, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0;
     if(!is_self_test && lcm->security_ctx) {
-        CRYPTO_DBG("%s\n", "received unsecured message, but lcm is initiated with security enabled. Dropping message...\n");
+        //received unsecured message, but lcm is initiated with security enabled. Dropping message...
         return 0;
     }
 
