@@ -28,6 +28,8 @@ struct Dutta_Barua_JOIN_response
 {
     int64_t timestamp_r1start_ms;
     int32_t participants;
-    Dutta_Barua_cert certificates[participants];
+    Dutta_Barua_cert certificates_participants[participants];
+    int32_t joining;
+    Dutta_Barua_cert certificates_joining[joining];
 }
 

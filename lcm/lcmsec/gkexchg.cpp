@@ -15,6 +15,7 @@
 #include <numeric>
 
 #include "lcmsec/dsa.h"
+#include "lcmsec/lcmsec_util.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
@@ -30,14 +31,10 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
       evloop(ev_loop),
       lcm(lcm)
 {
-    // create the appropriate join tasks
-    auto now = std::chrono::steady_clock::now();
-    auto curr = now;
-    while (curr < now + JOIN_waitperiod) {
-        auto t = [this] { JOIN(); };
-        ev_loop.push_task(curr, t);
-        curr += JOIN_rebroadcast_interval;
-    }
+    // start join later, to avoid race condition in which we JOIN, accept the JOIN, and finish the
+    // gkexchg before being subscribed with our LCM instance and able to receive on the management
+    // channel
+    evloop.push_task([this] { JOIN(); });
 }
 
 Dutta_Barua_GKE::Dutta_Barua_GKE(int uid) : uid{uid, 1} {}
@@ -234,14 +231,10 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 
 void KeyExchangeManager::JOIN()
 {
-    if (state != STATE::keyexchg_not_started) {
-        debug(std::string("not executing join(): keyexchange has already started, in state: ") +
-              state_name(state));
-        return;
-    }
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started);
+
     Dutta_Barua_JOIN join;
-    // FIXME: consistent r1start - use helper function, make this actually correct - behaviour
-    // is already correct but code confusing
+
     auto requested_r1start = std::chrono::steady_clock::now() + JOIN_waitperiod;
     auto requested_r1start_ms =
         std::chrono::time_point_cast<std::chrono::milliseconds>(requested_r1start);
@@ -253,55 +246,6 @@ void KeyExchangeManager::JOIN()
 
     std::string ch = std::string("join") + groupexchg_channelname;
     lcm.publish(ch, &join);
-
-    if (!current_earliest_r1start || requested_r1start < current_earliest_r1start) {
-        current_earliest_r1start = requested_r1start;
-        evloop.push_task(requested_r1start, [this]() { round1(); });
-    }
-}
-
-/*
- * issue a join response if a group exists already
- */
-void KeyExchangeManager::JOIN_response(int64_t requested_r1start)
-{
-    // Skip answering the join if there has already been an answer since the remote started
-    // sending join's
-    std::chrono::steady_clock::time_point requested_starting_time{
-        std::chrono::milliseconds(requested_r1start)};
-    auto remote_began_sending = requested_starting_time - JOIN_waitperiod;
-    if (last_answered_join && last_answered_join > remote_began_sending) {
-        debug("skip joinresponse early");
-        return;
-    }
-    debug("dispatching join_resp");
-
-    Dutta_Barua_JOIN_response response;
-
-    for (auto &[uid, cert] :
-         MOV(DSA_verifier::getInst().certificates_for_channel(mcastgroup, channelname))) {
-        Dutta_Barua_cert db_cert;
-        db_cert.cert_size = cert.size();
-        db_cert.x509_certificate_BER = MOV(cert);
-        // Only send the certificates of the members that are part of the active group
-        // The certificates that we added from join_requests are not needed:
-        //   if we send the full vector of participants certificates(joining + existing),
-        //   the remote can only separate them if he already knows the vector of joining
-        //   particpiants (by seeing the join's himself) it would be possible to send both
-        //   vectors separately; this is an optimization opportunity (correcting missed join's
-        //   in some cases, maybe get rid of repeated joins)
-
-        if (!std::binary_search(joining_participants.begin(), joining_participants.end(), uid))
-            response.certificates.push_back(MOV(db_cert));
-    }
-    response.participants = response.certificates.size();
-
-    current_earliest_r1start =
-        conditionally_create_task(requested_starting_time, [this] { join_existing(); });
-
-    std::string ch = std::string("join_resp") + groupexchg_channelname;
-    lcm.publish(ch, &response);
-    last_answered_join = std::chrono::steady_clock::now();
 }
 
 /*
@@ -317,102 +261,171 @@ static void add_participant(std::vector<int> &participants, int remote_uid)
     participants.erase(std::unique(participants.begin(), participants.end()), participants.end());
 }
 
+// print containers - debugging
+static std::ostream &operator<<(std::ostream &stream, const std::vector<int> &container)
+{
+    for (const auto &i : container)
+        stream << i << "\t";
+    return stream;
+}
+/*
+ * issue a join response if a group exists already
+ */
+void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1start)
+{
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+
+    std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
+              << joining_participants << " : " << participants << std::endl;
+    // Note that we do not need to test (in this method) whether or not we are a good candidate to
+    // dispatch a join_response
+    //
+    // Either we are a better candidate than the other join responses that we have so far observed -
+    // in which case we will have rejected them, thus, joining_participants will *not* contain
+    // uid_of join - or we are not, in which case we will have accepted their  response and thus
+    // uid_of_join *will* be part of joining_participants.
+    if (std::find(joining_participants.begin(), joining_participants.end(), uid_of_join) !=
+        joining_participants.end()) {
+        debug("join answered already, skipping join_response");
+        return;
+    }
+
+    add_participant(joining_participants, uid_of_join);
+
+    Dutta_Barua_JOIN_response response;
+    for (auto &[uid, cert] :
+         MOV(DSA_verifier::getInst().certificates_for_channel(mcastgroup, channelname))) {
+        Dutta_Barua_cert db_cert;
+        db_cert.cert_size = cert.size();
+        db_cert.x509_certificate_BER = MOV(cert);
+
+        if (std::binary_search(joining_participants.begin(), joining_participants.end(), uid)) {
+            response.certificates_joining.push_back(MOV(db_cert));
+        }
+        if (std::binary_search(participants.begin(), participants.end(), uid)) {
+            response.certificates_participants.push_back(MOV(db_cert));
+        }
+    }
+    response.joining = response.certificates_joining.size();
+    response.participants = response.certificates_participants.size();
+
+    std::chrono::steady_clock::time_point req_r1start{std::chrono::milliseconds(requested_r1start)};
+    response.timestamp_r1start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(
+                                        earliest_time(req_r1start, current_earliest_r1start))
+                                        .time_since_epoch()
+                                        .count();
+    // FIXME: change timedelta to us
+    static constexpr int td_range = 20;
+    srand(std::chrono::system_clock::now().time_since_epoch().count());
+    int us_offset = (std::rand() % (2 * td_range)) - td_range;
+    response.timestamp_r1start_ms += us_offset;
+
+    std::string ch = std::string("join_resp") + groupexchg_channelname;
+    lcm.publish(ch, &response);
+
+    debug("dispatching join_response with {" + std::to_string(response.participants) + ", " +
+          std::to_string(response.joining) + "}");
+}
+
 void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_response)
 {
-    // FIXME get out common logic
-    switch (state) {
-    case Dutta_Barua_GKE::STATE::keyexchg_not_started: {
-        auto &verifier = DSA_verifier::getInst();
-        for (const auto &cert : join_response->certificates) {
-            auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
-            if (!uid) {
-                throw std::runtime_error("certificate contained in received join_response invalid");
-            }
-            add_participant(participants, *uid);
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+
+    auto dbg_reject = [=](std::string msg) {
+        debug("rejecting join_response with {" + std::to_string(join_response->participants) +
+              ", " + std::to_string(join_response->joining) + "} :" + msg);
+    };
+    auto dbg_accept = [=] {
+        debug("accepting join_response with {" + std::to_string(join_response->participants) +
+              ", " + std::to_string(join_response->joining) + "}");
+    };
+    // First: achieve consensus on participants, while adding all certificants that we have not yet
+    // observed
+    auto &verifier = DSA_verifier::getInst();
+    std::vector<int> candidate_participants;
+
+    for (const auto &cert : join_response->certificates_participants) {
+        auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
+        if (!uid) {
+            throw std::runtime_error("certificate contained in received join_response invalid");
         }
-
-        // add earlier start to the join phsae in case it is required
-        std::chrono::steady_clock::time_point requested_r1start{
-            std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
-        prepare_join();
-        current_earliest_r1start =
-            conditionally_create_task(requested_r1start, [this] { join_new(); });
-        state = Dutta_Barua_GKE::STATE::join_in_progress;
-        break;
+        candidate_participants.push_back(uid.value());
     }
-    case Dutta_Barua_GKE::STATE::keyexchg_successful: {
-        // FIXME: this is problematic if the timestamps are not signed - DOS
-        last_answered_join = std::chrono::steady_clock::now();
-
-        prepare_join();
-        // add earlier start to the join phase in case it is required
-        std::chrono::steady_clock::time_point requested_r1start{
-            std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
-        current_earliest_r1start =
-            conditionally_create_task(requested_r1start, [this] { join_existing(); });
-        state = Dutta_Barua_GKE::STATE::join_in_progress;
-
-    } break;
-    default:;
-        // ignore join responses in the middle of a running keyexchange
+    if (candidate_participants.size() < participants.size()) {
+        // reject join_response remote as RAFT leader
+        // warrants no further action, return early
+        dbg_reject("response.participants < participants");
+        return;
     }
+
+    // Second: achieve consensus on joining participants, while adding all certificants that we have
+    // not yet observed
+    std::vector<int> candidate_joining;
+    for (const auto &cert : join_response->certificates_joining) {
+        auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
+        if (!uid) {
+            throw std::runtime_error("certificate contained in received join_response invalid");
+        }
+        candidate_joining.push_back(uid.value());
+    }
+    if (candidate_participants.size() == participants.size() &&
+        candidate_joining.size() < joining_participants.size()) {
+        // reject join_response / remote as RAFT leader
+        // warrants no further action, return early
+        dbg_reject("response.participants == participants and response.joining < joining");
+        return;
+    }
+
+    // Third: achieve consensus on start of round
+    std::chrono::steady_clock::time_point requested_starting_time{
+        std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
+
+    if (candidate_participants.size() == participants.size() &&
+        candidate_joining.size() == joining_participants.size() &&
+        !is_earlier(requested_starting_time, current_earliest_r1start)) {
+        // reject join_response / remote as RAFT leader
+        dbg_reject("response.participants == participants and response.joining < joining");
+        return;
+    }
+
+    dbg_accept();
+    // Accept remote as RAFT leader
+    participants = candidate_participants;
+    std::sort(participants.begin(), participants.end());
+    joining_participants = candidate_joining;
+    std::sort(joining_participants.begin(), joining_participants.end());
+
+    evloop.push_task(requested_starting_time, [=] { start_join(); });
 }
 
 void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 {
-    switch (state) {
-    case STATE::keyexchg_not_started: {
-        auto &verifier = DSA_verifier::getInst();
-        auto remote_uid = verifier.add_certificate(join_msg->certificate, mcastgroup, channelname);
-        if (!remote_uid)
-            return;
-        add_participant(joining_participants, *remote_uid);
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
 
-        std::chrono::steady_clock::time_point requested_r1start{
-            std::chrono::milliseconds(join_msg->timestamp_r1start_ms)};
-        if (!current_earliest_r1start || requested_r1start < *current_earliest_r1start) {
-            evloop.push_task(requested_r1start, [this]() { round1(); });
-            current_earliest_r1start = requested_r1start;
-        }
-        break;
-    }
-    case STATE::keyexchg_successful: {
-        auto &verifier = DSA_verifier::getInst();
-        auto remote_uid = verifier.add_certificate(join_msg->certificate, mcastgroup, channelname);
-        if (!remote_uid)
-            return;
-        add_participant(joining_participants, *remote_uid);
+    auto &verifier = DSA_verifier::getInst();
+    auto remote_uid = verifier.add_certificate(join_msg->certificate, mcastgroup, channelname);
+    if (!remote_uid)
+        return;
 
-        // dispatch JOIN_response at a random time
-        using namespace std::chrono;
-        int avgdelay_count_us = duration_cast<microseconds>(JOIN_response_avg_delay).count();
-        srand(std::chrono::system_clock::now().time_since_epoch().count());
-        int us_offset = (std::rand() % 2 * avgdelay_count_us) - avgdelay_count_us;
-        auto response_timepoint = steady_clock::now() + microseconds(us_offset);
-
-        // it is very important to name this variable.
-        // if it is unnamed, join_msg will be captured by value, instead of only the member -
-        // this is problematic, because join_msg will not be pointing to valid memory in the
-        // future (its lifetime is managed by LCM)
-        int requested_r1start = join_msg->timestamp_r1start_ms;
-
-        evloop.push_task(response_timepoint, [=] { JOIN_response(requested_r1start); });
-        break;
-    }
-    default:
-        debug("ignoring remote join() during execution of keyexchange...");
-    }
+    // dispatch JOIN_response at a random time
+    using namespace std::chrono;
+    int avgdelay_count_us = duration_cast<microseconds>(JOIN_response_avg_delay).count();
+    int variance_us = duration_cast<microseconds>(JOIN_response_variance).count();
+    srand(std::chrono::system_clock::now().time_since_epoch().count());
+    int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
+    auto response_timepoint =
+        steady_clock::now() + microseconds(avgdelay_count_us) + microseconds(us_offset);
+    debug("sending response in " +
+          std::to_string(
+              (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
+          "milliseconds");
+    evloop.push_task(response_timepoint,
+                       [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_ms,
+                        this] { JOIN_response(ruid, req_r1start); });
 }
 
 void Dutta_Barua_GKE::round1()
 {
-    switch (getState()) {
-    case STATE::keyexchg_not_started:  // fallthrough
-        break;
-    default:
-        return;  // avoid accidentally starting round1 multiple times - this would happen since
-                 // it is very possible that multiple round1 tasks are queued up.
-    }
     std::sort(joining_participants.begin(),
               joining_participants.end());  // FIXME do this in a better way
 
@@ -449,8 +462,6 @@ void Dutta_Barua_GKE::round1()
     msg.d = this->uid.d;
 
     sign_and_dispatch(msg);
-    auto &state = getState();
-    state = STATE::round1_done;
 }
 
 void Dutta_Barua_GKE::round2()
@@ -488,12 +499,12 @@ void Dutta_Barua_GKE::round2()
     r2_finished = true;
 }
 
-void Dutta_Barua_GKE::computeKey_passive() {
+void Dutta_Barua_GKE::computeKey_passive()
+{
     std::map<int, Botan::BigInt> right_keys;
 
-    auto wrapindex = [sz=joining_participants.size()](int i) {
-        return ((i - 1) % sz )+
-               1;  // wraparound respecting 1-indexing of dutta barua paper
+    auto wrapindex = [sz = joining_participants.size()](int i) {
+        return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
     // we can immediately add our own right key (computed from the previous round)
     int protocol_uid = 2;
@@ -538,7 +549,6 @@ void Dutta_Barua_GKE::computeKey_passive() {
     participants = MOV(joining_participants);
     joining_participants.clear();
     gkexchg_finished();
-    
 }
 
 void Dutta_Barua_GKE::computeKey()
@@ -546,9 +556,8 @@ void Dutta_Barua_GKE::computeKey()
     for (auto &[i, incoming] : r2_messages) {
         partial_session_id.push_back(user_id{uid_to_protocol_uid(incoming.u), incoming.d});
     }
-    auto wrapindex = [sz=joining_participants.size()](int i) {
-        return ((i - 1) % sz) +
-               1;  // wraparound respecting 1-indexing of dutta barua paper
+    auto wrapindex = [sz = joining_participants.size()](int i) {
+        return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
 
     std::map<int, Botan::BigInt> right_keys;
@@ -615,16 +624,14 @@ void Dutta_Barua_GKE::prepare_join()
     mgr->current_earliest_r1start = {};
 }
 
-void Dutta_Barua_GKE::join_existing()
+void Dutta_Barua_GKE::start_join()
 {
-    if (getState() != STATE::join_in_progress) {
-        debug("join_existing: wrong state: " + std::string(state_name(getState())) + ", exiting..");
-        return;
-    }
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+    state = STATE::keyexchg_in_progress;
 
-    debug("join from existing group member");
+    prepare_join();
 
-    if (participants.size() <= 3) {
+    if (participants.size() < 3) {
         // need a group of more than 3 participants to perform the dynamic version of the
         // keyexchange
         debug("existing group small: reform group instead of joining");
@@ -635,9 +642,7 @@ void Dutta_Barua_GKE::join_existing()
             std::unique(joining_participants.begin(), joining_participants.end()),
             joining_participants.end());
         participants.clear();
-        prepare_join();
         x_i.reset();
-        getState() = STATE::keyexchg_not_started;
         return round1();
     }
 
@@ -656,40 +661,14 @@ void Dutta_Barua_GKE::join_existing()
     if (first || second || last) {
         getRole() = JOIN_ROLE::active;
         debug("join:active r1 started");
-        getState() = STATE::keyexchg_not_started;
+        return round1();
+    } else if (std::binary_search(joining_participants.begin(), joining_participants.end(),
+                                  uid.u)) {
+        getRole() = JOIN_ROLE::joining;
+        debug("joining group");
         return round1();
     } else
         getRole() = JOIN_ROLE::passive;
-}
-void Dutta_Barua_GKE::join_new()
-{
-    if (getState() != STATE::join_in_progress) {
-        debug("prepare_join: wrong state: " + std::string(state_name(getState())) + ", exiting..");
-        return;
-    }
-
-    debug("join from new group member");
-
-    if (participants.size() < 3) {
-        // need a group of more than 3 participants to perform the dynamic version of the
-        // keyexchange
-        debug("existing group small: reform group instead of joining");
-        joining_participants.insert(joining_participants.end(), participants.begin(),
-                                    participants.end());
-        std::sort(joining_participants.begin(), joining_participants.end());
-        joining_participants.erase(
-            std::unique(joining_participants.begin(), joining_participants.end()),
-            joining_participants.end());
-        participants.clear();
-        getState() = STATE::keyexchg_not_started;
-        return round1();
-    }
-    joining_participants.insert(joining_participants.begin(), participants.back());
-    joining_participants.insert(joining_participants.begin(), *(participants.begin() + 1));
-    joining_participants.insert(joining_participants.begin(), participants.front());
-
-    getState() = STATE::keyexchg_not_started;
-    round1();
 }
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)

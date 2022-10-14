@@ -66,6 +66,8 @@ class DSA_verifier {
      * @brief add certificate to the internal certificate store if it has been signed by the trusted
      * authority
      *
+     * it is permitted to call this function if the certificate is already in the store
+     *
      * @param join incoming join msg that contains the certificate of the remote
      * @return uid of the remote for the parameters channelname and mcastgroup if it is contained in
      * the certificate, nullopt otherwise
