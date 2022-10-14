@@ -19,7 +19,11 @@ class Dutta_Barua_JOIN_response
 
         int32_t    participants;
 
-        std::vector< Dutta_Barua_cert > certificates;
+        std::vector< Dutta_Barua_cert > certificates_participants;
+
+        int32_t    joining;
+
+        std::vector< Dutta_Barua_cert > certificates_joining;
 
     public:
         /**
@@ -124,7 +128,15 @@ int Dutta_Barua_JOIN_response::_encodeNoHash(void *buf, int offset, int maxlen) 
     if(tlen < 0) return tlen; else pos += tlen;
 
     for (int a0 = 0; a0 < this->participants; a0++) {
-        tlen = this->certificates[a0]._encodeNoHash(buf, offset + pos, maxlen - pos);
+        tlen = this->certificates_participants[a0]._encodeNoHash(buf, offset + pos, maxlen - pos);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
+
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->joining, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    for (int a0 = 0; a0 < this->joining; a0++) {
+        tlen = this->certificates_joining[a0]._encodeNoHash(buf, offset + pos, maxlen - pos);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -142,12 +154,25 @@ int Dutta_Barua_JOIN_response::_decodeNoHash(const void *buf, int offset, int ma
     if(tlen < 0) return tlen; else pos += tlen;
 
     try {
-        this->certificates.resize(this->participants);
+        this->certificates_participants.resize(this->participants);
     } catch (...) {
         return -1;
     }
     for (int a0 = 0; a0 < this->participants; a0++) {
-        tlen = this->certificates[a0]._decodeNoHash(buf, offset + pos, maxlen - pos);
+        tlen = this->certificates_participants[a0]._decodeNoHash(buf, offset + pos, maxlen - pos);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
+
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->joining, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    try {
+        this->certificates_joining.resize(this->joining);
+    } catch (...) {
+        return -1;
+    }
+    for (int a0 = 0; a0 < this->joining; a0++) {
+        tlen = this->certificates_joining[a0]._decodeNoHash(buf, offset + pos, maxlen - pos);
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
@@ -160,7 +185,11 @@ int Dutta_Barua_JOIN_response::_getEncodedSizeNoHash() const
     enc_size += __int64_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     for (int a0 = 0; a0 < this->participants; a0++) {
-        enc_size += this->certificates[a0]._getEncodedSizeNoHash();
+        enc_size += this->certificates_participants[a0]._getEncodedSizeNoHash();
+    }
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
+    for (int a0 = 0; a0 < this->joining; a0++) {
+        enc_size += this->certificates_joining[a0]._getEncodedSizeNoHash();
     }
     return enc_size;
 }
@@ -173,7 +202,8 @@ uint64_t Dutta_Barua_JOIN_response::_computeHash(const __lcm_hash_ptr *p)
             return 0;
     const __lcm_hash_ptr cp = { p, Dutta_Barua_JOIN_response::getHash };
 
-    uint64_t hash = 0xcb52d37247bcaa03LL +
+    uint64_t hash = 0x05b82b2f2306a0b3LL +
+         Dutta_Barua_cert::_computeHash(&cp) +
          Dutta_Barua_cert::_computeHash(&cp);
 
     return (hash<<1) + ((hash>>63)&1);

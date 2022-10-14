@@ -159,7 +159,7 @@ class DSA_verifier::impl {
                 uid = cap.uid;
             // Note that Botan certificates are shared_ptr's under the hood, so this works
             // out nicely - since we store each cert "multiple times", but by reference only
-            certificate_store[MOV(cap)] = cert;
+            certificate_store.try_emplace(MOV(cap), MOV(cert));
         }
         return uid;
     }

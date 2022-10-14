@@ -35,27 +35,19 @@ class Dutta_Barua_GKE {
   public:
     enum class STATE : int {
         keyexchg_not_started = 0,
-        round1_done,
+        keyexchg_in_progress,
         keyexchg_successful,
-
-        join_in_progress,
         ENUMSIZE
     };
     inline const char *state_name(STATE s)
     {
-        static const char *STATE_names[] = {"keyexchg_not_started", "round1_done",
-                                            "keyexchg_successful", "join_in_progress"};
+        static const char *STATE_names[] = {"keyexchg_not_started", "in_progress",
+                                            "keyexchg_successful"};
         static_assert(sizeof(STATE_names) / sizeof(char *) == static_cast<int>(STATE::ENUMSIZE),
                       "sizes dont match");
         return STATE_names[static_cast<int>(s)];
     }
-
-    enum class JOIN_ROLE : int { 
-        invalid = 0,
-        joining,
-        active, 
-        passive, 
-        ENUMSIZE };
+    enum class JOIN_ROLE : int { invalid = 0, joining, active, passive, ENUMSIZE };
     inline const char *join_role_name(JOIN_ROLE r)
     {
         static const char *join_role_names[] = {"invalid", "joining", "active", "passive"};
@@ -64,6 +56,31 @@ class Dutta_Barua_GKE {
             "sizes dont match");
         return join_role_names[static_cast<int>(r)];
     }
+
+    STATE state{STATE::keyexchg_not_started};
+    JOIN_ROLE role{JOIN_ROLE::invalid};
+
+    bool _checkState(STATE s) { return (state == s) ? true : false; }
+
+    template <typename STATE, typename... States>
+    bool _checkState(STATE s, States... ss)
+    {
+        return checkState(s) || checkState(ss...);
+    }
+    template <typename... States>
+    bool checkState(States... ss)
+    {
+        bool result = _checkState(ss...);
+        if (!result) {
+            debug(std::string("invalid state ") + state_name(state));
+        }
+        return result;
+    }
+#define LCMSEC_CHECKSTATE(...)         \
+    do {                               \
+        if (!checkState(__VA_ARGS__)) \
+            return;                    \
+    } while (0);
 
     virtual void sign_and_dispatch(Dutta_Barua_message &msg) = 0;
     virtual void gkexchg_finished() = 0;          // hook for child to override
@@ -76,8 +93,7 @@ class Dutta_Barua_GKE {
     void computeKey_passive();
 
     void prepare_join();
-    void join_existing();
-    void join_new();
+    void start_join();
 
     struct user_id {
         int u, d;
@@ -87,8 +103,6 @@ class Dutta_Barua_GKE {
     // stateful members needed across multiple rounds of the keyexchange //
     std::vector<int> joining_participants;
     std::vector<int> participants;
-
-    std::optional<std::chrono::steady_clock::time_point> last_answered_join{};
 
     struct {
         Botan::PointGFp left;   // K_i^l
@@ -126,7 +140,8 @@ class Dutta_Barua_GKE {
         auto it = std::lower_bound(joining_participants.cbegin(), joining_participants.cend(),
                                    uid);  // take advantage of sorted array and do a binary search
         if (it == joining_participants.cend()) {
-            throw std::runtime_error("error: found no protocol uid for uid " + std::to_string(uid));
+            debug("error: found no protocol uid for uid " + std::to_string(uid));
+            throw std::runtime_error("remote not in particpant list");
         } else
             return it - joining_participants.begin() +
                    1;  // else, return the index that we found (but use 1-indexing)
@@ -148,22 +163,20 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::LCM &lcm);
 
     void JOIN();
-    void JOIN_response(int64_t requested_r1start);
+    void JOIN_response(int uid_of_join, int64_t requested_r1start);
     void onJOIN(const Dutta_Barua_JOIN *join_msg);
     void on_JOIN_response(const Dutta_Barua_JOIN_response *join_response);
 
     void on_msg(const Dutta_Barua_message *msg);
 
-    inline bool hasNewKey() {
-        if(has_new_key) {
+    inline bool hasNewKey()
+    {
+        if (has_new_key) {
             has_new_key = false;
             return true;
         }
         return false;
     }
-
-    STATE state{STATE::keyexchg_not_started};
-    JOIN_ROLE role{JOIN_ROLE::invalid};
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);
 
@@ -176,16 +189,14 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
         125);  // delay start of round1 after the first join() by this time
-    std::chrono::milliseconds JOIN_rebroadcast_interval = std::chrono::milliseconds(50);
     std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
+    std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
+
     std::optional<std::chrono::steady_clock::time_point> current_earliest_r1start = {};
 
     [[nodiscard]] virtual inline STATE &getState() override { return state; }
 
-    [[nodiscard]] virtual inline JOIN_ROLE &getRole() override
-    {
-        return role;
-    }
+    [[nodiscard]] virtual inline JOIN_ROLE &getRole() override { return role; }
 
   private:
     eventloop &evloop;
@@ -230,30 +241,19 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         has_new_key = true;
     }
 
-    std::chrono::steady_clock::time_point &earliest_time(
+    inline bool is_earlier(std::chrono::steady_clock::time_point &lhs,
+                           std::optional<std::chrono::steady_clock::time_point> &rhs)
+    {
+        return !rhs || lhs < *rhs;
+    }
+
+    inline std::chrono::steady_clock::time_point &earliest_time(
         std::chrono::steady_clock::time_point &tp,
         std::optional<std::chrono::steady_clock::time_point> &opt_tp)
     {
-        if (!opt_tp || tp < opt_tp) {
+        if (is_earlier(tp, opt_tp))
             return tp;
-        }
         return opt_tp.value();
-    }
-
-    std::chrono::steady_clock::time_point conditionally_create_task(
-        std::chrono::steady_clock::time_point &tp, eventloop::task_t task)
-    {
-        if (!current_earliest_r1start || tp < current_earliest_r1start) {
-            evloop.push_task(MOV(task));
-            current_earliest_r1start = tp;
-            return tp;
-        }
-        return *current_earliest_r1start;
-    }
-    std::chrono::steady_clock::time_point conditionally_create_r1_task(
-        std::chrono::steady_clock::time_point &tp)
-    {
-        return conditionally_create_task(tp, [this] { round1(); });
     }
 };
 
@@ -273,10 +273,7 @@ class KeyExchangeLCMHandler {
     void handle_JOIN_response(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                               const Dutta_Barua_JOIN_response *join_response);
 
-
-    bool hasNewKey() {
-        return impl.hasNewKey();
-    }
+    bool hasNewKey() { return impl.hasNewKey(); }
     /*
      * deleted copy and move constructors
      * This is important since this class will be used as an lcm handler object. Thus, its
