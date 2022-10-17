@@ -11,7 +11,6 @@
 #include <optional>
 #include <stdexcept>
 #include <vector>
-#include <ranges>
 
 #include "lcmsec/crypto_wrapper.h"
 #include "lcmsec/lcmsec_util.h"
@@ -36,9 +35,9 @@ namespace lcmsec_impl {
  * Uses 1-indexing of proto-uids for now
  */
 class ProtoUidView {
-    bool valid {false};
+    bool valid{false};
     std::vector<int> v;
-    size_t size;//cache size
+    size_t size;  // cache size
 
   public:
     inline void generate(const std::vector<int> &participants)
@@ -57,7 +56,8 @@ class ProtoUidView {
         size = participants.size();
     }
 
-    inline void generate(const std::vector<int> &participants, int uid_first, int uid_second, int uid_last)
+    inline void generate(const std::vector<int> &participants, int uid_first, int uid_second,
+                         int uid_last)
     {
         static constexpr int sentinel = -1;
         auto loop_it = [&](int i, int elem) {
@@ -70,13 +70,13 @@ class ProtoUidView {
         };
 
         int i = 0;
-        for(int elem : {uid_first, uid_second, uid_last}) {
+        for (int elem : {uid_first, uid_second, uid_last}) {
             loop_it(i, elem);
             i++;
         }
 
-        for (int i = 3; i < participants.size() +3; i++) {
-            loop_it(i, participants[i-3]);
+        for (int i = 3; i < participants.size() + 3; i++) {
+            loop_it(i, participants[i - 3]);
         }
         size = participants.size() + 3;
 
@@ -96,9 +96,7 @@ class ProtoUidView {
         assert(valid);
         return v;
     }
-    inline size_t get_size() const {
-        return size;
-    }
+    inline size_t get_size() const { return size; }
 };
 
 class GkexchgManagedState {
@@ -161,8 +159,8 @@ class GkexchgManagedState {
     // call process_timestamp third
     [[nodiscard]] bool process_timestamp(time_point tp);
 
-    // lock the object for modifications and generate a uid_view - used during ongoing key agreement to produce
-    // an immutable uid_view for that duration
+    // lock the object for modifications and generate a uid_view - used during ongoing key agreement
+    // to produce an immutable uid_view for that duration
     //
     // Will modify joining_participants
     void prepare_join();
