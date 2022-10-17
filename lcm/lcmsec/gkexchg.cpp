@@ -153,8 +153,9 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
 
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
-    if (role == Dutta_Barua_GKE::JOIN_ROLE::passive) {
-        auto remote_proto_uid = uid_to_protocol_uid(msg->u);
+    managed_state.prepare_join();
+    if (role == JOIN_ROLE::passive) {
+        auto remote_proto_uid = managed_state.uid_to_protocol_uid(msg->u);
         int left = 1;
         int right = 3;
         if (msg->round == 1) {
@@ -181,11 +182,11 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
                              " failed: faulty message (msg->round) but valid signature";
                 throw std::runtime_error(error);
             }
-            r2_messages[uid_to_protocol_uid(msg->u)] = *msg;
+            r2_messages[managed_state.uid_to_protocol_uid(msg->u)] = *msg;
         }
 
         if (r1_messages.left && r1_messages.right &&
-            r2_messages.size() == joining_participants.size()) {
+            r2_messages.size() == managed_state.num_joining()) {
             // If we have everything we can immediately compute the key
             round2();
             computeKey_passive();
@@ -193,7 +194,7 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
     } else {
         // Check first whether or not the message is meant for us - quick bailout so we avoid
         // checking the signature in some cases.
-        if (msg->round == 1 && !is_neighbour(msg))
+        if (msg->round == 1 && !managed_state.is_neighbour(uid.u, msg))
             return;
 
         auto &verifier = DSA_verifier::getInst();
@@ -206,9 +207,9 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
             // Note: it is intended that in the case of two participants, both of the conditions
             // hold; i.e. the 2-party case is just a special case of the group key exchange
             // algorithm
-            if (is_left_neighbour(msg))
+            if (managed_state.is_left_neighbour(uid.u, msg))
                 r1_messages.left = *msg;
-            if (is_right_neighbour(msg))
+            if (managed_state.is_right_neighbour(uid.u, msg))
                 r1_messages.right = *msg;
         } else {
             if (msg->round != 2) {
@@ -216,14 +217,14 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
                              " failed: faulty message (msg->round) but valid signature";
                 throw std::runtime_error(error);
             }
-            r2_messages[uid_to_protocol_uid(msg->u)] = *msg;
+            r2_messages[managed_state.uid_to_protocol_uid(msg->u)] = *msg;
         }
 
         // Check prerequisites for next round
         if (!r2_finished && r1_messages.left && r1_messages.right) {
             evloop.push_task([this] { round2(); });
         }
-        if (r2_finished && r2_messages.size() == joining_participants.size()) {
+        if (r2_finished && r2_messages.size() == managed_state.num_joining()) {
             evloop.push_task([this] { computeKey(); });
         }
     }
@@ -248,19 +249,6 @@ void KeyExchangeManager::JOIN()
     lcm.publish(ch, &join);
 }
 
-/*
- * refactor this away once we have implemented improved method of looking up uid's
- */
-static void add_participant(std::vector<int> &participants, int remote_uid)
-{
-    participants.push_back(remote_uid);
-
-    // deleting duplicates - FIXME Make this more efficient later - look up protocol uids by
-    // value of configured uid's; instead of searching through array each time
-    std::sort(participants.begin(), participants.end());
-    participants.erase(std::unique(participants.begin(), participants.end()), participants.end());
-}
-
 // print containers - debugging
 static std::ostream &operator<<(std::ostream &stream, const std::vector<int> &container)
 {
@@ -276,7 +264,8 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
 
     std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
-              << joining_participants << " : " << participants << std::endl;
+              << managed_state.get_joining() << " : " << managed_state.get_participants()
+              << std::endl;
     // Note that we do not need to test (in this method) whether or not we are a good candidate to
     // dispatch a join_response
     //
@@ -284,36 +273,54 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     // in which case we will have rejected them, thus, joining_participants will *not* contain
     // uid_of join - or we are not, in which case we will have accepted their  response and thus
     // uid_of_join *will* be part of joining_participants.
-    if (std::find(joining_participants.begin(), joining_participants.end(), uid_of_join) !=
-        joining_participants.end()) {
+    if (managed_state.exists_in_joining(uid_of_join)) {
         debug("join answered already, skipping join_response");
         return;
     }
 
-    add_participant(joining_participants, uid_of_join);
-
+    auto &verif = DSA_verifier::getInst();
     Dutta_Barua_JOIN_response response;
-    for (auto &[uid, cert] :
-         MOV(DSA_verifier::getInst().certificates_for_channel(mcastgroup, channelname))) {
-        Dutta_Barua_cert db_cert;
-        db_cert.cert_size = cert.size();
-        db_cert.x509_certificate_BER = MOV(cert);
+    capability cap_template(mcastgroup, channelname, {});
+    enum class role { participant, joining };
 
-        if (std::binary_search(joining_participants.begin(), joining_participants.end(), uid)) {
+    auto add_cert_to_response = [&](int uid, role r) {
+        cap_template.uid = uid;
+        auto cert_ber = verif.get_certificate(cap_template);
+        if (!cert_ber)
+            throw std::runtime_error("found no certificate for uid " + std::to_string(uid) +
+                                     " in certificate_store");
+        Dutta_Barua_cert db_cert;
+        db_cert.cert_size = cert_ber->size();
+        db_cert.x509_certificate_BER = MOV(*cert_ber);
+        if (r == role::joining)
             response.certificates_joining.push_back(MOV(db_cert));
-        }
-        if (std::binary_search(participants.begin(), participants.end(), uid)) {
+        else if (r == role::participant)
             response.certificates_participants.push_back(MOV(db_cert));
-        }
+        else
+            assert(false);
+    };
+
+    // NOTE: we do not need to add uid_of_join to our managed state: We will receive our own
+    // join_response anyways; so we will simply accept it when we receive it
+    add_cert_to_response(uid_of_join, role::joining);
+
+    for (int u : managed_state.get_joining()) {
+        add_cert_to_response(u, role::joining);
     }
+    for (int i : managed_state.get_participants()) {
+        add_cert_to_response(i, role::participant);
+    }
+
     response.joining = response.certificates_joining.size();
     response.participants = response.certificates_participants.size();
 
+    // Same note as above: it suffices to set this field in the response
     std::chrono::steady_clock::time_point req_r1start{std::chrono::milliseconds(requested_r1start)};
     response.timestamp_r1start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(
-                                        earliest_time(req_r1start, current_earliest_r1start))
+                                        earliest_time(req_r1start, managed_state.r1start()))
                                         .time_since_epoch()
                                         .count();
+
     // FIXME: change timedelta to us
     static constexpr int td_range = 20;
     srand(std::chrono::system_clock::now().time_since_epoch().count());
@@ -339,11 +346,12 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
         debug("accepting join_response with {" + std::to_string(join_response->participants) +
               ", " + std::to_string(join_response->joining) + "}");
     };
+
+    auto &verifier = DSA_verifier::getInst();
+
     // First: achieve consensus on participants, while adding all certificants that we have not yet
     // observed
-    auto &verifier = DSA_verifier::getInst();
     std::vector<int> candidate_participants;
-
     for (const auto &cert : join_response->certificates_participants) {
         auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
         if (!uid) {
@@ -351,9 +359,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
         }
         candidate_participants.push_back(uid.value());
     }
-    if (candidate_participants.size() < participants.size()) {
-        // reject join_response remote as RAFT leader
-        // warrants no further action, return early
+    if (!managed_state.process_participant(&candidate_participants)) {
         dbg_reject("response.participants < participants");
         return;
     }
@@ -368,32 +374,21 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
         }
         candidate_joining.push_back(uid.value());
     }
-    if (candidate_participants.size() == participants.size() &&
-        candidate_joining.size() < joining_participants.size()) {
-        // reject join_response / remote as RAFT leader
-        // warrants no further action, return early
-        dbg_reject("response.participants == participants and response.joining < joining");
+    if (!managed_state.process_joining(&candidate_joining)) {
+        dbg_reject("response.participants == participants, but response.joining < joining");
         return;
     }
 
     // Third: achieve consensus on start of round
     std::chrono::steady_clock::time_point requested_starting_time{
         std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
-
-    if (candidate_participants.size() == participants.size() &&
-        candidate_joining.size() == joining_participants.size() &&
-        !is_earlier(requested_starting_time, current_earliest_r1start)) {
-        // reject join_response / remote as RAFT leader
-        dbg_reject("response.participants == participants and response.joining < joining");
+    if (!managed_state.process_timestamp(requested_starting_time)) {
+        dbg_reject(
+            "response.participants == participants && response.joining == joining but "
+            "requested_starting_time > current_earliest_r1start");
         return;
     }
-
     dbg_accept();
-    // Accept remote as RAFT leader
-    participants = candidate_participants;
-    std::sort(participants.begin(), participants.end());
-    joining_participants = candidate_joining;
-    std::sort(joining_participants.begin(), joining_participants.end());
 
     evloop.push_task(requested_starting_time, [=] { start_join(); });
 }
@@ -420,25 +415,22 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
               (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
           "milliseconds");
     evloop.push_task(response_timepoint,
-                       [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_ms,
-                        this] { JOIN_response(ruid, req_r1start); });
+                     [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_ms,
+                      this] { JOIN_response(ruid, req_r1start); });
 }
 
 void Dutta_Barua_GKE::round1()
 {
-    std::sort(joining_participants.begin(),
-              joining_participants.end());  // FIXME do this in a better way
-
     auto &verifier = DSA_verifier::getInst();
-    for (auto &e : joining_participants) {
+    for (auto &e : managed_state.get_participants()) {
         std::cout << e << "\t";
     }
 
-    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(joining_participants.size()) +
+    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(managed_state.num_joining()) +
            "participants ------- ")
               .c_str());
     partial_session_id.push_back(
-        user_id{uid_to_protocol_uid(uid.u),
+        user_id{managed_state.uid_to_protocol_uid(uid.u),
                 uid.d});  // initialize the partial session id with the *protocol_user_id*
 
     if (!x_i) {  // In the join phase, x_i might have to be preinitialized.
@@ -503,7 +495,7 @@ void Dutta_Barua_GKE::computeKey_passive()
 {
     std::map<int, Botan::BigInt> right_keys;
 
-    auto wrapindex = [sz = joining_participants.size()](int i) {
+    auto wrapindex = [sz = managed_state.num_joining()](int i) {
         return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
     // we can immediately add our own right key (computed from the previous round)
@@ -518,7 +510,7 @@ void Dutta_Barua_GKE::computeKey_passive()
     current_rightkey = (Y * current_rightkey) % group.get_p();
     right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
 
-    for (int i = 2; i <= joining_participants.size() - 1; i++) {
+    for (int i = 2; i <= managed_state.num_joining() - 1; i++) {
         int idx = wrapindex(i + protocol_uid);
         assert(r2_messages.count(idx) == 1);
         db_get_public_value(r2_messages[idx], Y);
@@ -528,12 +520,14 @@ void Dutta_Barua_GKE::computeKey_passive()
     }
 
     // correctness check
-    int lastindex = wrapindex(protocol_uid + joining_participants.size() - 1);
+    int lastindex = wrapindex(protocol_uid + managed_state.num_joining() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
     if (correctness)
         debug("group key exchange successful!");
     else {
         debug("key computation correctness check failed");
+        managed_state.gke_failure();
+        // FIXME: restart, reset (analogue function to gkexchg_finished), etc.
         return;  // FIXME failure should be signaled in some form is actionable for the
                  // consumer of the API
     }
@@ -546,24 +540,24 @@ void Dutta_Barua_GKE::computeKey_passive()
     // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
     // endl;
 
-    participants = MOV(joining_participants);
-    joining_participants.clear();
+    managed_state.gke_success();
     gkexchg_finished();
 }
 
 void Dutta_Barua_GKE::computeKey()
 {
     for (auto &[i, incoming] : r2_messages) {
-        partial_session_id.push_back(user_id{uid_to_protocol_uid(incoming.u), incoming.d});
+        partial_session_id.push_back(
+            user_id{managed_state.uid_to_protocol_uid(incoming.u), incoming.d});
     }
-    auto wrapindex = [sz = joining_participants.size()](int i) {
+    auto wrapindex = [sz = managed_state.num_joining()](int i) {
         return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
 
     std::map<int, Botan::BigInt> right_keys;
 
     // we can immediately add our own right key (computed from the previous round)
-    int protocol_uid = uid_to_protocol_uid(uid.u);
+    int protocol_uid = managed_state.uid_to_protocol_uid(uid.u);
     right_keys[protocol_uid] = Botan::BigInt(r1_results.right);
 
     Botan::BigInt current_rightkey = r1_results.right;
@@ -574,7 +568,7 @@ void Dutta_Barua_GKE::computeKey()
     current_rightkey = (Y * current_rightkey) % group.get_p();
     right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
 
-    for (int i = 2; i <= joining_participants.size() - 1; i++) {
+    for (int i = 2; i <= managed_state.num_joining() - 1; i++) {
         int idx = wrapindex(i + protocol_uid);
         // debug(("idx: " + std::to_string(idx)).c_str());
         assert(r2_messages.count(idx) == 1);
@@ -585,12 +579,14 @@ void Dutta_Barua_GKE::computeKey()
     }
 
     // correctness check
-    int lastindex = wrapindex(protocol_uid + joining_participants.size() - 1);
+    int lastindex = wrapindex(protocol_uid + managed_state.num_joining() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
     if (correctness)
         debug("group key exchange successful!");
     else {
         debug("key computation correctness check failed");
+        managed_state.gke_failure();
+        // FIXME: restart, reset (analogue function to gkexchg_finished), etc.
         return;  // FIXME failure should be signaled in some form is actionable for the
                  // consumer of the API
     }
@@ -603,12 +599,10 @@ void Dutta_Barua_GKE::computeKey()
     // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
     // endl;
 
-    participants = MOV(joining_participants);
-    joining_participants.clear();
     gkexchg_finished();
 }
 
-void Dutta_Barua_GKE::prepare_join()
+void Dutta_Barua_GKE::cleanup_intermediates()
 {
     // Cleanup any intermediate stuff
     r1_results.left.clear();
@@ -618,10 +612,6 @@ void Dutta_Barua_GKE::prepare_join()
 
     r2_finished = false;
     r2_messages.clear();
-
-    auto mgr = dynamic_cast<KeyExchangeManager *>(this);  // probably just implement this in parent
-    assert(mgr);
-    mgr->current_earliest_r1start = {};
 }
 
 void Dutta_Barua_GKE::start_join()
@@ -629,27 +619,14 @@ void Dutta_Barua_GKE::start_join()
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
     state = STATE::keyexchg_in_progress;
 
-    prepare_join();
+    managed_state.prepare_join();
 
-    if (participants.size() < 3) {
-        // need a group of more than 3 participants to perform the dynamic version of the
-        // keyexchange
-        debug("existing group small: reform group instead of joining");
-        joining_participants.insert(joining_participants.end(), participants.begin(),
-                                    participants.end());
-        std::sort(joining_participants.begin(), joining_participants.end());
-        joining_participants.erase(
-            std::unique(joining_participants.begin(), joining_participants.end()),
-            joining_participants.end());
-        participants.clear();
+    if (managed_state.num_participants() < 3) {
         x_i.reset();
         return round1();
     }
 
-    joining_participants.insert(joining_participants.begin(), participants.back());
-    joining_participants.insert(joining_participants.begin(), *(participants.begin() + 1));
-    joining_participants.insert(joining_participants.begin(), participants.front());
-
+    const auto &participants = managed_state.get_participants();
     bool first = participants.front() == uid.u;
     bool second = participants[1] == uid.u;
     bool last = participants.back() == uid.u;
@@ -662,8 +639,7 @@ void Dutta_Barua_GKE::start_join()
         getRole() = JOIN_ROLE::active;
         debug("join:active r1 started");
         return round1();
-    } else if (std::binary_search(joining_participants.begin(), joining_participants.end(),
-                                  uid.u)) {
+    } else if (managed_state.exists_in_joining(uid.u)) {
         getRole() = JOIN_ROLE::joining;
         debug("joining group");
         return round1();

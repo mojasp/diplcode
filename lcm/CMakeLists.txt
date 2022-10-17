@@ -17,9 +17,10 @@ set(lcm_sources
   lcmsec/crypto_wrapper.cpp
   lcmsec/gkexchg.cpp
   lcmsec/dsa.cpp
+  lcmsec/managed_state.cpp
 )
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 set(lcm_install_headers
   eventlog.h

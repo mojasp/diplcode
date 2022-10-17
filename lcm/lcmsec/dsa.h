@@ -76,9 +76,13 @@ class DSA_verifier {
                                                      const std::string &channelname,
                                                      const std::optional<std::string> mcastgroup);
 
+    /*
+     * get the BER-encoded certificate for a specific (mcastgroup, channelname, uid) tuple; or nullopt if no such certificate exists
+     */
+    [[nodiscard]] std::optional<std::vector<uint8_t>> get_certificate(const capability& cap) const;
 
     /**
-     * @brief return all certificates for a given channel
+     * @brief return all certificates for a given channel (BER-encoded)
      *
      * @param multicast_group the group on which the channel is active
      * @param channelname channelname
@@ -94,7 +98,7 @@ class DSA_verifier {
 
     class impl;
 
-    // Use pImpl idiom here to reduce compile times that are increased by the templatemagic that
+    // Use pImpl idiom here to avoid instantiating template for the hashing
     // makes hashing work
     std::unique_ptr<impl> pImpl;
 };

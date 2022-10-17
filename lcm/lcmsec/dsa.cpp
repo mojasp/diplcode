@@ -139,6 +139,12 @@ class DSA_verifier::impl {
   public:
     impl(std::string filename) : root_ca(filename) {}
 
+    [[nodiscard]] std::optional<std::vector<uint8_t>> get_certificate(const capability& cap) const{
+        const auto& e = certificate_store.find(cap);
+        if(e == certificate_store.end()) return {};
+        return e->second.BER_encode();
+    }
+
     [[nodiscard]] std::optional<int> add_certificate(const Dutta_Barua_cert &encoded_cert,
                                                      const std::string &mcastgroup,
                                                      const std::optional<std::string> channelname)
@@ -239,7 +245,11 @@ DSA_verifier::DSA_verifier(std::string filename) : pImpl(std::make_unique<impl>(
     return pImpl->add_certificate(cert, mcastgroup, channelname);
 }
 
-std::vector<std::pair<int, std::vector<uint8_t>>> DSA_verifier::certificates_for_channel(std::string multicast_group,
+[[nodiscard]] std::optional<std::vector<uint8_t>> DSA_verifier::get_certificate(const capability& cap) const {
+    return pImpl->get_certificate(cap);
+}
+
+[[nodiscard]] std::vector<std::pair<int, std::vector<uint8_t>>> DSA_verifier::certificates_for_channel(std::string multicast_group,
                                                 std::optional<std::string> channelname) const
 {
     return pImpl->certificates_for_channel(MOV(multicast_group), MOV(channelname));
