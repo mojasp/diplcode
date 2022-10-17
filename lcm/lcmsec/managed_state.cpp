@@ -11,21 +11,7 @@ namespace lcmsec_impl {
 int GkexchgManagedState::uid_to_protocol_uid(int uid) const
 {
     assert(locked);
-    auto it = std::find(joining_participants.cbegin(), joining_participants.cend(),
-                        uid);  // take advantage of sorted array and do a binary search
-    if (it == joining_participants.cend()) {
-        throw std::runtime_error("error: found no protocol uid for uid " + std::to_string(uid));
-    } else
-        return it - joining_participants.begin() +
-               1;  // else, return the index that we found (but use 1-indexing)
-}
-
-int GkexchgManagedState::protocol_uid_to_uid(int proto_uid) const
-{
-    assert(locked);
-    // the protocol user ID's are the indices of participants
-    //  NOTE: it is necessary to convert from and to 1-indexing here
-    return joining_participants.at(proto_uid - 1) + 1;
+    return proto_uid_view.get().at(uid);
 }
 
 const std::vector<int> &GkexchgManagedState::get_participants() const
@@ -111,10 +97,9 @@ bool GkexchgManagedState::is_neighbour(int uid, const Dutta_Barua_message *msg) 
 bool GkexchgManagedState::is_left_neighbour(int uid, const Dutta_Barua_message *msg) const
 {
     assert(locked);
-    // FIXME when synchronization is done
     int my_uid = uid_to_protocol_uid(uid);
     int their_uid = uid_to_protocol_uid(msg->u);
-    int neighbour = (my_uid == 1) ? joining_participants.size() : my_uid - 1;
+    int neighbour = (my_uid == 1) ? proto_uid_view.get_size() : my_uid - 1;
     return their_uid == neighbour;
 }
 
@@ -123,7 +108,7 @@ bool GkexchgManagedState::is_right_neighbour(int uid, const Dutta_Barua_message 
     int my_uid = uid_to_protocol_uid(uid);
     int their_uid = uid_to_protocol_uid(msg->u);
 
-    int neighbour = (my_uid == joining_participants.size()) ? 1 : my_uid + 1;
+    int neighbour = (my_uid == proto_uid_view.get_size()) ? 1 : my_uid + 1;
     return their_uid == neighbour;
 }
 
@@ -134,7 +119,7 @@ bool GkexchgManagedState::find_uid_in_participants(int uid) const
 
 bool GkexchgManagedState::exists_in_joining(int uid) const
 {
-    return std::find(joining_participants.begin(), joining_participants.end(), uid) != joining_participants.end();
+    return std::binary_search(joining_participants.begin(), joining_participants.end(), uid);
 }
 
 // prepare_join will be called multiple times; depending on which is earlier: our own start of
@@ -157,17 +142,12 @@ void GkexchgManagedState::prepare_join()
             std::unique(joining_participants.begin(), joining_participants.end()),
             joining_participants.end());  // for good measure, i think it is not needed though
         participants.clear();
+        proto_uid_view.generate(joining_participants);
     } else {
-        joining_participants.insert(joining_participants.begin(), participants.back());
-        joining_participants.insert(joining_participants.begin(), *(participants.begin() + 1));
-        joining_participants.insert(joining_participants.begin(), participants.front());
-
-        joining_participants.erase(
-            std::unique(joining_participants.begin(), joining_participants.end()),
-            joining_participants.end());  // for good measure, i think it is not needed though
+        proto_uid_view.generate(joining_participants, participants.front(), participants.at(1),
+                                participants.back());
     }
     locked = true;
-    proto_uid_view.generate(joining_participants);
 }
 
 // reset after finishing group key exchange

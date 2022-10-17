@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 #include <vector>
+#include <ranges>
 
 #include "lcmsec/crypto_wrapper.h"
 #include "lcmsec/lcmsec_util.h"
@@ -37,9 +38,10 @@ namespace lcmsec_impl {
 class ProtoUidView {
     bool valid {false};
     std::vector<int> v;
+    size_t size;//cache size
 
   public:
-    void generate(const std::vector<int> &participants)
+    inline void generate(const std::vector<int> &participants)
     {
         assert(!valid);
         static constexpr int sentinel = -1;
@@ -52,9 +54,36 @@ class ProtoUidView {
             v[uid] = proto_uid;
         }
         valid = true;
+        size = participants.size();
     }
 
-    void clear()
+    inline void generate(const std::vector<int> &participants, int uid_first, int uid_second, int uid_last)
+    {
+        static constexpr int sentinel = -1;
+        auto loop_it = [&](int i, int elem) {
+            int proto_uid = i + 1;
+            int uid = elem;
+            while (v.size() <= uid)
+                v.push_back(sentinel);
+            assert(v.at(uid) == sentinel);  // no duplicates allowed
+            v[uid] = proto_uid;
+        };
+
+        int i = 0;
+        for(int elem : {uid_first, uid_second, uid_last}) {
+            loop_it(i, elem);
+            i++;
+        }
+
+        for (int i = 3; i < participants.size() +3; i++) {
+            loop_it(i, participants[i-3]);
+        }
+        size = participants.size() + 3;
+
+        valid = true;
+    }
+
+    inline void clear()
     {
         assert(valid);
         v.clear();
@@ -66,6 +95,9 @@ class ProtoUidView {
     {
         assert(valid);
         return v;
+    }
+    inline size_t get_size() const {
+        return size;
     }
 };
 
@@ -132,7 +164,7 @@ class GkexchgManagedState {
     // lock the object for modifications and generate a uid_view - used during ongoing key agreement to produce
     // an immutable uid_view for that duration
     //
-    // Will modify joining_participants  //FIXME: switch to uid_view
+    // Will modify joining_participants
     void prepare_join();
 
     // reset after finishing group key exchange
@@ -154,6 +186,7 @@ class GkexchgManagedState {
     [[nodiscard]] bool exists_in_joining(int uid) const;
 
     [[nodiscard]] inline bool is_locked() const { return locked; }
+
     /*
      * The following functions may only be called if is_locked() is true; i.e., consensus is reached
      * and now < r1start + ε
@@ -161,11 +194,7 @@ class GkexchgManagedState {
     // Map virtual user ids (counting - sequentially - all the user ID's that are participating in
     // the protocol) to the real ones (the ones that are configured in the certificates, and are
     // part of the messages that are transmitted) NOTE: both use 1-indexing
-
-    // FIXME reimplement using uid_view
-    // THIS METHOD AS IT STANDS MAY ONLY BE CALLED WITH VALID UID's
     [[nodiscard]] int uid_to_protocol_uid(int uid) const;
-    [[nodiscard]] int protocol_uid_to_uid(int proto_uid) const;
 
     [[nodiscard]] bool is_neighbour(int uid, const Dutta_Barua_message *msg) const;
     [[nodiscard]] bool is_left_neighbour(int uid, const Dutta_Barua_message *msg) const;
