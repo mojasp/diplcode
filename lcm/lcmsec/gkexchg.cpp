@@ -224,7 +224,7 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
         if (!r2_finished && r1_messages.left && r1_messages.right) {
             evloop.push_task([this] { round2(); });
         }
-        if (r2_finished && r2_messages.size() == managed_state.num_joining()) {
+        if (r2_finished && r2_messages.size() == managed_state.active_participants()) {
             evloop.push_task([this] { computeKey(); });
         }
     }
@@ -422,11 +422,12 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 void Dutta_Barua_GKE::round1()
 {
     auto &verifier = DSA_verifier::getInst();
-    for (auto &e : managed_state.get_participants()) {
+    for (const auto &e : managed_state.uid_view().get()) {
         std::cout << e << "\t";
     }
+    std::cout << std::endl;
 
-    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(managed_state.num_joining()) +
+    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(managed_state.active_participants()) +
            "participants ------- ")
               .c_str());
     partial_session_id.push_back(
@@ -495,7 +496,7 @@ void Dutta_Barua_GKE::computeKey_passive()
 {
     std::map<int, Botan::BigInt> right_keys;
 
-    auto wrapindex = [sz = managed_state.num_joining()](int i) {
+    auto wrapindex = [sz = managed_state.active_participants()](int i) {
         return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
     // we can immediately add our own right key (computed from the previous round)
@@ -510,7 +511,7 @@ void Dutta_Barua_GKE::computeKey_passive()
     current_rightkey = (Y * current_rightkey) % group.get_p();
     right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
 
-    for (int i = 2; i <= managed_state.num_joining() - 1; i++) {
+    for (int i = 2; i <= managed_state.active_participants() - 1; i++) {
         int idx = wrapindex(i + protocol_uid);
         assert(r2_messages.count(idx) == 1);
         db_get_public_value(r2_messages[idx], Y);
@@ -520,7 +521,7 @@ void Dutta_Barua_GKE::computeKey_passive()
     }
 
     // correctness check
-    int lastindex = wrapindex(protocol_uid + managed_state.num_joining() - 1);
+    int lastindex = wrapindex(protocol_uid + managed_state.active_participants() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
     if (correctness)
         debug("group key exchange successful!");
@@ -550,7 +551,7 @@ void Dutta_Barua_GKE::computeKey()
         partial_session_id.push_back(
             user_id{managed_state.uid_to_protocol_uid(incoming.u), incoming.d});
     }
-    auto wrapindex = [sz = managed_state.num_joining()](int i) {
+    auto wrapindex = [sz = managed_state.active_participants()](int i) {
         return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
     };
 
@@ -568,7 +569,7 @@ void Dutta_Barua_GKE::computeKey()
     current_rightkey = (Y * current_rightkey) % group.get_p();
     right_keys[wrapindex(protocol_uid + 1)] = Botan::BigInt(current_rightkey);
 
-    for (int i = 2; i <= managed_state.num_joining() - 1; i++) {
+    for (int i = 2; i <= managed_state.active_participants() - 1; i++) {
         int idx = wrapindex(i + protocol_uid);
         // debug(("idx: " + std::to_string(idx)).c_str());
         assert(r2_messages.count(idx) == 1);
@@ -579,7 +580,7 @@ void Dutta_Barua_GKE::computeKey()
     }
 
     // correctness check
-    int lastindex = wrapindex(protocol_uid + managed_state.num_joining() - 1);
+    int lastindex = wrapindex(protocol_uid + managed_state.active_participants() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
     if (correctness)
         debug("group key exchange successful!");

@@ -39,11 +39,12 @@ class ProtoUidView {
     std::vector<int> v;
     size_t size;  // cache size
 
+    static constexpr int sentinel = -1;
+
   public:
     inline void generate(const std::vector<int> &participants)
     {
         assert(!valid);
-        static constexpr int sentinel = -1;
         for (int i = 0; i < participants.size(); i++) {
             int proto_uid = i + 1;
             int uid = participants[i];
@@ -59,7 +60,6 @@ class ProtoUidView {
     inline void generate(const std::vector<int> &participants, int uid_first, int uid_second,
                          int uid_last)
     {
-        static constexpr int sentinel = -1;
         auto loop_it = [&](int i, int elem) {
             int proto_uid = i + 1;
             int uid = elem;
@@ -96,7 +96,19 @@ class ProtoUidView {
         assert(valid);
         return v;
     }
-    inline size_t get_size() const { return size; }
+    inline int at(int uid) const
+    {
+        assert(valid);
+        auto result = v.at(uid);
+        assert(result != sentinel);
+        return result;
+    }
+
+    inline size_t get_size() const
+    {
+        assert(valid);
+        return size;
+    }
 };
 
 class GkexchgManagedState {
@@ -194,6 +206,11 @@ class GkexchgManagedState {
     // part of the messages that are transmitted) NOTE: both use 1-indexing
     [[nodiscard]] int uid_to_protocol_uid(int uid) const;
 
+    /**
+     * @brief return the number of participants that take active role in the groupkeyexchange
+     */
+    [[nodiscard]] int active_participants() const;
+    [[nodiscard]] ProtoUidView const& uid_view() const;
     [[nodiscard]] bool is_neighbour(int uid, const Dutta_Barua_message *msg) const;
     [[nodiscard]] bool is_left_neighbour(int uid, const Dutta_Barua_message *msg) const;
     [[nodiscard]] bool is_right_neighbour(int uid, const Dutta_Barua_message *msg) const;

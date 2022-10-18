@@ -11,7 +11,7 @@ namespace lcmsec_impl {
 int GkexchgManagedState::uid_to_protocol_uid(int uid) const
 {
     assert(locked);
-    return proto_uid_view.get().at(uid);
+    return proto_uid_view.at(uid);
 }
 
 const std::vector<int> &GkexchgManagedState::get_participants() const
@@ -88,6 +88,10 @@ bool GkexchgManagedState::process_timestamp(time_point tp)
     return current_earliest_r1start;
 }
 
+[[nodiscard]] int GkexchgManagedState::active_participants() const{
+    return proto_uid_view.get_size();
+}
+
 bool GkexchgManagedState::is_neighbour(int uid, const Dutta_Barua_message *msg) const
 {
     assert(locked);
@@ -105,6 +109,7 @@ bool GkexchgManagedState::is_left_neighbour(int uid, const Dutta_Barua_message *
 
 bool GkexchgManagedState::is_right_neighbour(int uid, const Dutta_Barua_message *msg) const
 {
+    assert(locked);
     int my_uid = uid_to_protocol_uid(uid);
     int their_uid = uid_to_protocol_uid(msg->u);
 
@@ -115,6 +120,12 @@ bool GkexchgManagedState::is_right_neighbour(int uid, const Dutta_Barua_message 
 bool GkexchgManagedState::find_uid_in_participants(int uid) const
 {
     throw("unimplemented");
+}
+
+[[nodiscard]] ProtoUidView const& GkexchgManagedState::uid_view() const{
+
+    assert(locked);
+    return proto_uid_view;
 }
 
 bool GkexchgManagedState::exists_in_joining(int uid) const
