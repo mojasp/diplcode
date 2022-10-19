@@ -132,31 +132,6 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
     bigint.binary_decode((uint8_t *) msg.public_value.data(), msg.public_value.size());
 }
 
-/*
- * uid layout
- * ----------------------
- *
- * assume 5 participants with uid's 1, 2, 4, 5, 7 have agreed to a key.
- *
- * Now 3 users with respective UID 3, 6, 8 execute join()
- *
- * there is a uid vector : [1,2,4,5,7] at the start. simply add [3, 6, 8] to that vector, so the
- * vector looks like this: [1, 2, 4, 5, 7, 3, 6, 8] Now we need a view into the vector that looks
- * like this: [1, 2, 7, 3, 6, 8] - size l = m+3
- *
- * If we instead use an ordered map (constant time lookup from uid's to protocol uids ):
- *  start: 1-1 2-2 4-3 5-4 7-5
- *  after join: 1-1 2-2 4-3 5-4 7-5 3-6 6-7 8-9
- *      Note that the actual user ID's are not important, what is important is consensus among
- * participants view for key exchange: 1-1 2-2 7-5 3-6- 6-7 8-9 Note that we need to create a new
- *
- * In both cases what we really need is a way to go map n to l(=m+3)
- *  the indices stay the same actually
- *  The map version is more efficient probably: we get const time lookup - although even better
- * would be a vector with flipped indices (i.e.; reserve space in vector<int> first; then assign
- * vec[10] = 1 when uid 10 gets protoUid 1)
- */
-
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
     managed_state.prepare_join();
