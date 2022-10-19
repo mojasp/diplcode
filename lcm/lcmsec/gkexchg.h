@@ -181,6 +181,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         uid.d++;
         cleanup_intermediates();
         managed_state.gke_failure();
+        JOIN();
     }
 };
 

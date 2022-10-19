@@ -196,7 +196,9 @@ void GkexchgManagedState::gke_failure()
     process_state = _process_state{};
 
     current_earliest_r1start = std::nullopt;
+
     joining_participants.clear();
+    participants.clear();
 }
 
 }  // namespace lcmsec_impl
