@@ -42,7 +42,6 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
     // start join later, to avoid race condition in which we JOIN, accept the JOIN, and finish the
     // gkexchg before being subscribed with our LCM instance and able to receive on the management
     // channel 
-    // FIXME i think this comment is outdated and this way of doing things no longer necessary
     add_task(std::chrono::steady_clock::now(), [this] { JOIN(); });
 }
 
