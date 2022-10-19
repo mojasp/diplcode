@@ -121,7 +121,7 @@ public:
             lcm.handle();  // guaranteed to be nonblocking
         }
         if (status < 0) {
-            throw std::runtime_error("select error: " + std::string(strerror(errno)));
+            throw std::runtime_error("lcmsec: select error in eventloop: " + std::string(strerror(errno)));
         }
     }
 

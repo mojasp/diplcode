@@ -3,6 +3,7 @@
 #define PROTOCOL_UID_HPP
 
 #include <vector>
+
 namespace lcmsec_impl {
 /**
  * @class ProtoUidView

@@ -5,8 +5,6 @@
 // state manged by the RAFT-inspired gkexchg protocol
 #include <algorithm>
 #include <chrono>
-#include <coroutine>
-#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -15,6 +13,7 @@
 #include "lcmsec/lcmsec_util.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
+#include "lcmsec/protocol_uid.hpp"
 #include "state.hpp"
 
 namespace lcmsec_impl {

@@ -14,6 +14,7 @@
 #include "dsa.h"
 #include "lcm.h"
 #include "lcmsec/eventloop.hpp"
+#include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
@@ -100,6 +101,19 @@ class Dutta_Barua_GKE {
 };
 
 class KeyExchangeManager : public Dutta_Barua_GKE {
+  private:
+    // Recovery management:
+    //
+    // Recall that the primary strategy we use to avoid raceconditions are idempotent tasks that are
+    // registered with our eventloop This poses a challenge from the recovery standpoint (restarting
+    // the keyexchange after something goes wrong) - even after the cleanup, there still might be
+    // "old" tasks in our eventloop
+    //
+    // Solution:
+    // Keep track of the current invocation count of our keyexchange. On Error, increase this count.
+    // when tasks are called, ignore all those with an old invocation count
+    void add_task(eventloop::timepoint_t tp, std::function<void()> f);
+
   public:
     KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::LCM &lcm);
 
@@ -153,11 +167,20 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     {
         state = STATE::keyexchg_successful;
         role = JOIN_ROLE::invalid;
+        uid.d++;
         evloop.channel_finished();
         has_new_key = true;
-        // FIXME:reset managed state
         cleanup_intermediates();
         managed_state.gke_success();
+    }
+
+    inline void gkexchg_failure()
+    {
+        state = STATE::keyexchg_not_started;
+        role = JOIN_ROLE::invalid;
+        uid.d++;
+        cleanup_intermediates();
+        managed_state.gke_failure();
     }
 };
 

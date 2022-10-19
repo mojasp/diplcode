@@ -1,5 +1,7 @@
 #include "lcmsec/protocol_uid.hpp"
 #include <cassert>
+#include "lcmsec/lcmexcept.hpp"
+
 namespace lcmsec_impl{
 
 void ProtoUidView::generate(const std::vector<int> &participants)
@@ -10,7 +12,10 @@ void ProtoUidView::generate(const std::vector<int> &participants)
         int uid = participants[i];
         while (v.size() <= uid)
             v.push_back(sentinel);
-        assert(v.at(uid) == sentinel);  // no duplicates allowed
+        if(v.at(uid) != sentinel){
+            //uid is already part of group
+            throw rejoin_error("uid  " + std::to_string(uid) + " tries to join, but is part of group already");
+        }  
         v[uid] = proto_uid;
     }
     valid = true;
@@ -28,7 +33,10 @@ void ProtoUidView::generate(const std::vector<int> &participants, int uid_first,
         int uid = elem;
         while (v.size() <= uid)
             v.push_back(sentinel);
-        assert(v.at(uid) == sentinel);  // no duplicates allowed
+        if(v.at(uid) != sentinel){
+            //uid is already part of group
+            throw rejoin_error("uid  " + std::to_string(uid) + " tries to join, but is part of group already");
+        }  
         v[uid] = proto_uid;
     };
 
@@ -48,7 +56,6 @@ void ProtoUidView::generate(const std::vector<int> &participants, int uid_first,
 
 void ProtoUidView::clear()
 {
-    assert(valid);
     v.clear();
     assert(v.size() == 0);
     valid = false;
@@ -64,7 +71,8 @@ int ProtoUidView::at(int uid) const
 {
     assert(valid);
     auto result = v.at(uid);
-    assert(result != sentinel);
+    if(result == sentinel)
+        throw uid_unknown("managed state: uid " + std::to_string(uid) + " not part of ProtocolUidView");
     return result;
 }
 

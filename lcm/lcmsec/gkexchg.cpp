@@ -11,10 +11,12 @@
 #include <botan/pubkey.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <numeric>
 
 #include "lcmsec/dsa.h"
+#include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmsec_util.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
@@ -39,8 +41,9 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
 {
     // start join later, to avoid race condition in which we JOIN, accept the JOIN, and finish the
     // gkexchg before being subscribed with our LCM instance and able to receive on the management
-    // channel
-    evloop.push_task([this] { JOIN(); });
+    // channel 
+    // FIXME i think this comment is outdated and this way of doing things no longer necessary
+    add_task(std::chrono::steady_clock::now(), [this] { JOIN(); });
 }
 
 Dutta_Barua_GKE::Dutta_Barua_GKE(int uid) : uid{uid, 1} {}
@@ -132,6 +135,24 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
     bigint.binary_decode((uint8_t *) msg.public_value.data(), msg.public_value.size());
 }
 
+void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void()> f)
+{
+    auto task = [=, invo_cnt=uid.d, f=MOV(f)]() {
+        if (invo_cnt != uid.d) {
+            return;
+        }
+        try {
+            f();
+        } catch (keyagree_exception &e) {
+            std::cerr << "keyagree failed on channel"
+                      << channelname.value_or("nullopt") + " with: " << e.what()
+                      << " ! Restarting Key agreement...." << std::endl;
+            gkexchg_failure();
+        }
+    };
+    evloop.push_task(tp, task);
+};
+
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
     managed_state.prepare_join();
@@ -156,9 +177,10 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
                 assert(false);  /// unreachable
         } else {
             if (msg->round != 2) {
-                auto error = "keyexchange on channel " + groupexchg_channelname +
-                             " failed: faulty message (msg->round) but valid signature";
-                throw std::runtime_error(error);
+                auto err = "lcmsec: keyexchange on channel " + groupexchg_channelname +
+                           " failed: faulty message (msg->round = " + std::to_string(msg->round) +
+                           ") but valid signature";
+                throw remote_faulty(err);
             }
             r2_messages[managed_state.uid_to_protocol_uid(msg->u)] = *msg;
         }
@@ -180,19 +202,20 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
                 r1_messages.right = *msg;
         } else {
             if (msg->round != 2) {
-                auto error = "keyexchange on channel " + groupexchg_channelname +
-                             " failed: faulty message (msg->round) but valid signature";
-                throw std::runtime_error(error);
+                auto err = "lcmsec: keyexchange on channel " + groupexchg_channelname +
+                           " failed: faulty message (msg->round = " + std::to_string(msg->round) +
+                           ") but valid signature";
+                throw remote_faulty(err);
             }
             r2_messages[managed_state.uid_to_protocol_uid(msg->u)] = *msg;
         }
 
         // Check prerequisites for next round
         if (!r2_finished && r1_messages.left && r1_messages.right) {
-            evloop.push_task([this] { round2(); });
+            round2();
         }
         if (r2_finished && r2_messages.size() == managed_state.active_participants()) {
-            evloop.push_task([this] { computeKey(); });
+            computeKey();
         }
     }
 }
@@ -247,8 +270,8 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
         cap_template.uid = uid;
         auto cert_ber = verif.get_certificate(cap_template);
         if (!cert_ber)
-            throw std::runtime_error("found no certificate for uid " + std::to_string(uid) +
-                                     " in certificate_store");
+            throw uid_unknown("found no certificate for uid " + std::to_string(uid) +
+                              " in certificate_store");
         Dutta_Barua_cert db_cert;
         db_cert.cert_size = cert_ber->size();
         db_cert.x509_certificate_BER = MOV(*cert_ber);
@@ -315,7 +338,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     for (const auto &cert : join_response->certificates_participants) {
         auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
         if (!uid) {
-            throw std::runtime_error("certificate contained in received join_response invalid");
+            throw remote_invalid_cert("certificate contained in received join_response invalid");
         }
         candidate_participants.push_back(uid.value());
     }
@@ -330,7 +353,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     for (const auto &cert : join_response->certificates_joining) {
         auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
         if (!uid) {
-            throw std::runtime_error("certificate contained in received join_response invalid");
+            throw remote_invalid_cert("certificate contained in received join_response invalid");
         }
         candidate_joining.push_back(uid.value());
     }
@@ -350,7 +373,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     }
     dbg_accept();
 
-    evloop.push_task(requested_starting_time, [=] { start_join(); });
+    add_task(requested_starting_time, [=] { start_join(); });
 }
 
 void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
@@ -374,7 +397,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
           std::to_string(
               (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
           "milliseconds");
-    evloop.push_task(response_timepoint,
+    add_task(response_timepoint,
                      [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_ms,
                       this] { JOIN_response(ruid, req_r1start); });
 }
@@ -486,11 +509,7 @@ void Dutta_Barua_GKE::computeKey_passive()
     if (correctness)
         debug("group key exchange successful!");
     else {
-        debug("key computation correctness check failed");
-        managed_state.gke_failure();
-        // FIXME: restart, reset (analogue function to gkexchg_finished), etc.
-        return;  // FIXME failure should be signaled in some form is actionable for the
-                 // consumer of the API
+        throw keyagree_exception("key computation correctness check failed");
     }
     shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
                                     [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
@@ -545,11 +564,7 @@ void Dutta_Barua_GKE::computeKey()
     if (correctness)
         debug("group key exchange successful!");
     else {
-        debug("key computation correctness check failed");
-        managed_state.gke_failure();
-        // FIXME: restart, reset (analogue function to gkexchg_finished), etc.
-        return;  // FIXME failure should be signaled in some form is actionable for the
-                 // consumer of the API
+        throw keyagree_exception("key computation correctness check failed");
     }
     shared_secret = std::accumulate(right_keys.begin(), right_keys.end(), Botan::BigInt(1),
                                     [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
@@ -610,9 +625,11 @@ void Dutta_Barua_GKE::start_join()
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
 {
-    //leave this exception for now: it should not be an exception at all, instead, the error should be signaled to the library user with an error code. However, this is will change when the API reaches a more mature stater / is designed properly
+    // leave this exception for now: it should not be an exception at all, instead, the error should
+    // be signaled to the library user with an error code. However, this is will change when the API
+    // reaches a more mature stater / is designed properly
     if (!shared_secret)
-        throw std::runtime_error( 
+        throw std::runtime_error(
             "get_session_key(): No shared secret has been agreed upon on channel " +
             channelname.value_or("nullopt") +
             ". Maybe the group key "

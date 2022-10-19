@@ -1,17 +1,25 @@
 #include "managed_state.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <stdexcept>
 #include <string>
 
 #include "crypto_wrapper.h"
+#include "lcmsec/lcmexcept.hpp"
 #include "lcmsec_util.h"
 
 namespace lcmsec_impl {
 int GkexchgManagedState::uid_to_protocol_uid(int uid) const
 {
     assert(locked);
-    return proto_uid_view.at(uid);
+
+    try {
+        return proto_uid_view.at(uid);
+    }
+    catch(std::out_of_range& e){
+        throw uid_unknown("managed state: uid " + std::to_string(uid) + " not part of ProtocolUidView");
+    }
 }
 
 const std::vector<int> &GkexchgManagedState::get_participants() const
