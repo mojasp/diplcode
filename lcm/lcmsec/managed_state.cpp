@@ -136,6 +136,8 @@ bool GkexchgManagedState::exists_in_joining(int uid) const
 // prepare_join will be called multiple times; depending on which is earlier: our own start of
 // round1, or the first received round1_message. In any case, this is the time we need to prepare
 // the join in order to have access to protocol uid's
+//
+// Idempotent method
 void GkexchgManagedState::prepare_join()
 {
     if (locked)

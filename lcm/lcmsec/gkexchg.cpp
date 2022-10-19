@@ -154,22 +154,19 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
     managed_state.prepare_join();
+    auto &verifier = DSA_verifier::getInst();
+    if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
+        debug("signature verification failed");
+        return;
+    }
+
+    int remote_uid = managed_state.uid_to_protocol_uid(msg->u);
+
     if (role == JOIN_ROLE::passive) {
-        auto remote_proto_uid = managed_state.uid_to_protocol_uid(msg->u);
-        int left = 1;
-        int right = 3;
         if (msg->round == 1) {
-            if (remote_proto_uid != left && remote_proto_uid != right)
-                return;  // we only care about 1 and 3
-        }
-
-        auto &verifier = DSA_verifier::getInst();
-        if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
-            debug("signature verification failed");
-            return;
-        }
-
-        if (msg->round == 1) {
+            int left = 1;
+            int right = 3;
+            auto remote_proto_uid = managed_state.uid_to_protocol_uid(msg->u);
             if (remote_proto_uid == left)
                 r1_messages.left = *msg;
             else if (remote_proto_uid == right)
@@ -192,17 +189,6 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
             computeKey_passive();
         }
     } else {
-        // Check first whether or not the message is meant for us - quick bailout so we avoid
-        // checking the signature in some cases.
-        if (msg->round == 1 && !managed_state.is_neighbour(uid.u, msg))
-            return;
-
-        auto &verifier = DSA_verifier::getInst();
-        if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
-            debug("signature verification failed");
-            return;
-        }
-
         if (msg->round == 1) {
             // Note: it is intended that in the case of two participants, both of the conditions
             // hold; i.e. the 2-party case is just a special case of the group key exchange
@@ -249,13 +235,6 @@ void KeyExchangeManager::JOIN()
     lcm.publish(ch, &join);
 }
 
-// print containers - debugging
-static std::ostream &operator<<(std::ostream &stream, const std::vector<int> &container)
-{
-    for (const auto &i : container)
-        stream << i << "\t";
-    return stream;
-}
 /*
  * issue a join response if a group exists already
  */
@@ -427,8 +406,8 @@ void Dutta_Barua_GKE::round1()
     }
     std::cout << std::endl;
 
-    debug(("------ starting Dutta_Barua_GKE with " + std::to_string(managed_state.active_participants()) +
-           "participants ------- ")
+    debug(("------ starting Dutta_Barua_GKE with " +
+           std::to_string(managed_state.active_participants()) + "participants ------- ")
               .c_str());
     partial_session_id.push_back(
         user_id{managed_state.uid_to_protocol_uid(uid.u),
@@ -650,8 +629,9 @@ void Dutta_Barua_GKE::start_join()
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
 {
+    //leave this exception for now: it should not be an exception at all, instead, the error should be signaled to the library user with an error code. However, this is will change when the API reaches a more mature stater / is designed properly
     if (!shared_secret)
-        throw std::runtime_error(
+        throw std::runtime_error( 
             "get_session_key(): No shared secret has been agreed upon on channel " +
             channelname.value_or("nullopt") +
             ". Maybe the group key "

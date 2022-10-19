@@ -60,6 +60,8 @@ class ProtoUidView {
     inline void generate(const std::vector<int> &participants, int uid_first, int uid_second,
                          int uid_last)
     {
+        //This would be a lot easier with an extra copy of the participant vector, but it is possible without
+
         auto loop_it = [&](int i, int elem) {
             int proto_uid = i + 1;
             int uid = elem;
