@@ -97,11 +97,6 @@ class Dutta_Barua_GKE {
         // }
         return result;
     }
-#define LCMSEC_CHECKSTATE(...)        \
-    do {                              \
-        if (!checkState(__VA_ARGS__)) \
-            return;                   \
-    } while (0);
 };
 
 class KeyExchangeManager : public Dutta_Barua_GKE {

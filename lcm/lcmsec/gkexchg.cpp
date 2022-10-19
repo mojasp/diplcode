@@ -22,6 +22,12 @@
 
 namespace lcmsec_impl {
 
+#define LCMSEC_CHECKSTATE(...)        \
+    do {                              \
+        if (!checkState(__VA_ARGS__)) \
+            return;                   \
+    } while (0);
+
 KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::LCM &lcm)
     : Dutta_Barua_GKE(cap.uid),
       groupexchg_channelname(
