@@ -18,6 +18,7 @@ set(lcm_sources
   lcmsec/gkexchg.cpp
   lcmsec/dsa.cpp
   lcmsec/managed_state.cpp
+  lcmsec/protocol_uid.cpp
 )
 
 set(CMAKE_CXX_STANDARD 20)

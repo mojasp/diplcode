@@ -4,7 +4,6 @@
 
 // state manged by the RAFT-inspired gkexchg protocol
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <coroutine>
 #include <functional>
@@ -19,99 +18,6 @@
 #include "state.hpp"
 
 namespace lcmsec_impl {
-
-/**
- * @class ProtoUidView
- * @brief A sparse view of uids for fast lookup during protocol execution
- *
- * Intended to be generated before the first round of the protocol starts
- *
- * If we consider joining_participant a function that maps from uid to proto_uid,
- *   ProtoUidView.v will be its inverse
- *
- * If locked, no modification of v is permitted
- * v is only valid if locked = true
- *
- * Uses 1-indexing of proto-uids for now
- */
-class ProtoUidView {
-    bool valid{false};
-    std::vector<int> v;
-    size_t size;  // cache size
-
-    static constexpr int sentinel = -1;
-
-  public:
-    inline void generate(const std::vector<int> &participants)
-    {
-        assert(!valid);
-        for (int i = 0; i < participants.size(); i++) {
-            int proto_uid = i + 1;
-            int uid = participants[i];
-            while (v.size() <= uid)
-                v.push_back(sentinel);
-            assert(v.at(uid) == sentinel);  // no duplicates allowed
-            v[uid] = proto_uid;
-        }
-        valid = true;
-        size = participants.size();
-    }
-
-    inline void generate(const std::vector<int> &participants, int uid_first, int uid_second,
-                         int uid_last)
-    {
-        //This would be a lot easier with an extra copy of the participant vector, but it is possible without
-
-        auto loop_it = [&](int i, int elem) {
-            int proto_uid = i + 1;
-            int uid = elem;
-            while (v.size() <= uid)
-                v.push_back(sentinel);
-            assert(v.at(uid) == sentinel);  // no duplicates allowed
-            v[uid] = proto_uid;
-        };
-
-        int i = 0;
-        for (int elem : {uid_first, uid_second, uid_last}) {
-            loop_it(i, elem);
-            i++;
-        }
-
-        for (int i = 3; i < participants.size() + 3; i++) {
-            loop_it(i, participants[i - 3]);
-        }
-        size = participants.size() + 3;
-
-        valid = true;
-    }
-
-    inline void clear()
-    {
-        assert(valid);
-        v.clear();
-        assert(v.size() == 0);
-        valid = false;
-    }
-
-    inline const std::vector<int> &get() const
-    {
-        assert(valid);
-        return v;
-    }
-    inline int at(int uid) const
-    {
-        assert(valid);
-        auto result = v.at(uid);
-        assert(result != sentinel);
-        return result;
-    }
-
-    inline size_t get_size() const
-    {
-        assert(valid);
-        return size;
-    }
-};
 
 class GkexchgManagedState {
   public:
