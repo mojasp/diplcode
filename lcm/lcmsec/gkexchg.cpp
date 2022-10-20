@@ -41,8 +41,17 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
 {
     // start join later, to avoid race condition in which we JOIN, accept the JOIN, and finish the
     // gkexchg before being subscribed with our LCM instance and able to receive on the management
-    // channel 
+    // channel
     add_task(std::chrono::steady_clock::now(), [this] { JOIN(); });
+
+    // prepare a timeout task - will not be called in case of success of the group key exchange, since in that
+    // case the invocation count will have increased already
+    add_task(std::chrono::steady_clock::now() + gkexchg_timeout, [this] {
+        std::cerr << channelname.value_or("nullopt") << ": groupkeyexchange timed out on channel, restarting..." << std::endl;
+        gkexchg_failure();
+    });
+
+
 }
 
 Dutta_Barua_GKE::Dutta_Barua_GKE(int uid) : uid{uid, 1} {}
@@ -136,8 +145,9 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
 
 void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void()> f)
 {
-    auto task = [=, invo_cnt=uid.d, f=MOV(f)]() {
-        if (invo_cnt != uid.d) {
+    auto task = [=,this, invo_cnt = uid.d, f = MOV(f)]() {
+        assert(this->uid.d >= invo_cnt);
+        if (invo_cnt != this->uid.d) {
             return;
         }
         try {
@@ -150,6 +160,11 @@ void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void(
         }
     };
     evloop.push_task(tp, task);
+};
+
+void KeyExchangeManager::add_task(std::function<void()> f)
+{
+    add_task(std::chrono::steady_clock::now(), MOV(f));
 };
 
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
@@ -392,7 +407,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
     int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
     auto response_timepoint =
         steady_clock::now() + microseconds(avgdelay_count_us) + microseconds(us_offset);
-    debug("sending response in " +
+    debug("sending response to (" + std::to_string(remote_uid.value()) + ") in " +
           std::to_string(
               (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
           "milliseconds");
@@ -515,10 +530,6 @@ void Dutta_Barua_GKE::computeKey_passive()
                                         return (acc * value.second) % group.get_p();
                                     });
 
-    using namespace std;
-    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
-    // endl;
-
     managed_state.gke_success();
     gkexchg_finished();
 }
@@ -569,10 +580,6 @@ void Dutta_Barua_GKE::computeKey()
                                     [this](Botan::BigInt acc, std::pair<int, Botan::BigInt> value) {
                                         return (acc * value.second) % group.get_p();
                                     });
-
-    using namespace std;
-    // cout << channelname << " u: " << uid.u << "computed session key: " << session_key <<
-    // endl;
 
     gkexchg_finished();
 }
@@ -645,20 +652,38 @@ KeyExchangeLCMHandler::KeyExchangeLCMHandler(capability cap, eventloop &ev_loop,
 void KeyExchangeLCMHandler::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                           const Dutta_Barua_message *msg)
 {
-    impl.on_msg(msg);
+    try {
+        impl.on_msg(msg);
+    } catch (keyagree_exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
+                  << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    }
 }
 
 void KeyExchangeLCMHandler::handle_JOIN(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                         const Dutta_Barua_JOIN *join_msg)
 {
-    impl.onJOIN(join_msg);
+    try {
+        impl.onJOIN(join_msg);
+    } catch (keyagree_exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
+                  << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    }
 }
 
 void KeyExchangeLCMHandler::handle_JOIN_response(const lcm::ReceiveBuffer *rbuf,
                                                  const std::string &chan,
                                                  const Dutta_Barua_JOIN_response *join_response)
 {
-    impl.on_JOIN_response(join_response);
+    try {
+        impl.on_JOIN_response(join_response);
+    } catch (keyagree_exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
+                  << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    }
 }
 
 }  // namespace lcmsec_impl
