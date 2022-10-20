@@ -240,10 +240,11 @@ void KeyExchangeManager::JOIN()
 
     Dutta_Barua_JOIN join;
 
+    join.sig_size = 0; //FIXME
     auto requested_r1start = std::chrono::steady_clock::now() + JOIN_waitperiod;
-    auto requested_r1start_ms =
-        std::chrono::time_point_cast<std::chrono::milliseconds>(requested_r1start);
-    join.timestamp_r1start_ms = requested_r1start_ms.time_since_epoch().count();
+    auto requested_r1start_us =
+        std::chrono::time_point_cast<std::chrono::microseconds>(requested_r1start);
+    join.timestamp_r1start_us = requested_r1start_us.time_since_epoch().count();
 
     auto &cert = DSA_certificate_self::getInst().cert;
     join.certificate.x509_certificate_BER = cert.BER_encode();
@@ -256,7 +257,7 @@ void KeyExchangeManager::JOIN()
 /*
  * issue a join response if a group exists already
  */
-void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1start)
+void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1start_us)
 {
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
 
@@ -311,18 +312,19 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     response.joining = response.certificates_joining.size();
     response.participants = response.certificates_participants.size();
 
+    response.sig_size = 0; //FIXME
+
     // Same note as above: it suffices to set this field in the response
-    std::chrono::steady_clock::time_point req_r1start{std::chrono::milliseconds(requested_r1start)};
-    response.timestamp_r1start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::time_point req_r1start{std::chrono::microseconds(requested_r1start_us)};
+    response.timestamp_r1start_us = std::chrono::time_point_cast<std::chrono::microseconds>(
                                         earliest_time(req_r1start, managed_state.r1start()))
                                         .time_since_epoch()
                                         .count();
 
-    // FIXME: change timedelta to us
-    static constexpr int td_range = 20;
+    static constexpr int td_range_us = 20000;
     srand(std::chrono::system_clock::now().time_since_epoch().count());
-    int us_offset = (std::rand() % (2 * td_range)) - td_range;
-    response.timestamp_r1start_ms += us_offset;
+    int us_offset = (std::rand() % (2 * td_range_us)) - td_range_us;
+    response.timestamp_r1start_us += us_offset;
 
     std::string ch = std::string("join_resp") + groupexchg_channelname;
     lcm.publish(ch, &response);
@@ -378,7 +380,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
 
     // Third: achieve consensus on start of round
     std::chrono::steady_clock::time_point requested_starting_time{
-        std::chrono::milliseconds(join_response->timestamp_r1start_ms)};
+        std::chrono::microseconds(join_response->timestamp_r1start_us)};
     if (!managed_state.process_timestamp(requested_starting_time)) {
         dbg_reject(
             "response.participants == participants && response.joining == joining but "
@@ -412,7 +414,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
               (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
           "milliseconds");
     add_task(response_timepoint,
-                     [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_ms,
+                     [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_us,
                       this] { JOIN_response(ruid, req_r1start); });
 }
 

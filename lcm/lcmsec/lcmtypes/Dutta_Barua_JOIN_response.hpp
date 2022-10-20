@@ -10,12 +10,13 @@
 
 #include <vector>
 #include "Dutta_Barua_cert.hpp"
+#include "Dutta_Barua_cert.hpp"
 
 
 class Dutta_Barua_JOIN_response
 {
     public:
-        int64_t    timestamp_r1start_ms;
+        int64_t    timestamp_r1start_us;
 
         int32_t    participants;
 
@@ -24,6 +25,10 @@ class Dutta_Barua_JOIN_response
         int32_t    joining;
 
         std::vector< Dutta_Barua_cert > certificates_joining;
+
+        int32_t    sig_size;
+
+        std::vector< uint8_t > sig;
 
     public:
         /**
@@ -121,7 +126,7 @@ int Dutta_Barua_JOIN_response::_encodeNoHash(void *buf, int offset, int maxlen) 
 {
     int pos = 0, tlen;
 
-    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_ms, 1);
+    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_us, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->participants, 1);
@@ -140,6 +145,14 @@ int Dutta_Barua_JOIN_response::_encodeNoHash(void *buf, int offset, int maxlen) 
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->sig_size, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    if(this->sig_size > 0) {
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
+
     return pos;
 }
 
@@ -147,7 +160,7 @@ int Dutta_Barua_JOIN_response::_decodeNoHash(const void *buf, int offset, int ma
 {
     int pos = 0, tlen;
 
-    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_ms, 1);
+    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_us, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->participants, 1);
@@ -176,6 +189,15 @@ int Dutta_Barua_JOIN_response::_decodeNoHash(const void *buf, int offset, int ma
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->sig_size, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    if(this->sig_size) {
+        this->sig.resize(this->sig_size);
+        tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
+
     return pos;
 }
 
@@ -191,6 +213,8 @@ int Dutta_Barua_JOIN_response::_getEncodedSizeNoHash() const
     for (int a0 = 0; a0 < this->joining; a0++) {
         enc_size += this->certificates_joining[a0]._getEncodedSizeNoHash();
     }
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
+    enc_size += __byte_encoded_array_size(NULL, this->sig_size);
     return enc_size;
 }
 
@@ -202,7 +226,7 @@ uint64_t Dutta_Barua_JOIN_response::_computeHash(const __lcm_hash_ptr *p)
             return 0;
     const __lcm_hash_ptr cp = { p, Dutta_Barua_JOIN_response::getHash };
 
-    uint64_t hash = 0x05b82b2f2306a0b3LL +
+    uint64_t hash = 0xd815b84f6d4c408bLL +
          Dutta_Barua_cert::_computeHash(&cp) +
          Dutta_Barua_cert::_computeHash(&cp);
 

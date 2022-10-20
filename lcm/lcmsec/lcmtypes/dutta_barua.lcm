@@ -19,17 +19,23 @@ struct Dutta_Barua_cert {
 
 struct Dutta_Barua_JOIN
 {
-    int64_t timestamp_r1start_ms;
+    int64_t timestamp_r1start_us;
     Dutta_Barua_cert certificate;
+
+    int32_t sig_size;
+    byte sig [sig_size];
 }
 
 
 struct Dutta_Barua_JOIN_response 
 {
-    int64_t timestamp_r1start_ms;
+    int64_t timestamp_r1start_us;
     int32_t participants;
     Dutta_Barua_cert certificates_participants[participants];
     int32_t joining;
     Dutta_Barua_cert certificates_joining[joining];
+
+    int32_t sig_size;
+    byte sig [sig_size];
 }
 
