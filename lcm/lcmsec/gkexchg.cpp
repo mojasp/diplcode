@@ -638,6 +638,11 @@ void KeyExchangeLCMHandler::handleMessage(const lcm::ReceiveBuffer *rbuf, const 
         std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
                   << " ! Restarting Key agreement...." << std::endl;
         impl.gkexchg_failure();
+    } catch (Botan::Exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname()
+                  << " with BOTAN Exception: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
     }
 }
 
@@ -649,6 +654,11 @@ void KeyExchangeLCMHandler::handle_JOIN(const lcm::ReceiveBuffer *rbuf, const st
     } catch (keyagree_exception &e) {
         std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
                   << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    } catch (Botan::Exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname()
+                  << " with BOTAN Exception: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
         impl.gkexchg_failure();
     }
 }
