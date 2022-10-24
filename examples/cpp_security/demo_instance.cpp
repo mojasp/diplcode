@@ -27,7 +27,7 @@ constexpr std::chrono::duration sender_delay(2s);
 
 class Handler {
   private:
-    bool print_received_msg;
+    bool print_received_msg{true};
 
   public:
     ~Handler() {}
