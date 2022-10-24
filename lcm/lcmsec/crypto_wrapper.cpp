@@ -330,7 +330,7 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
 
     memcpy(ptext, pt.data(), pt.size());
 
-    CRYPTO_DBG("decrypted channelname %s using %s and IV = %s\n", ptext, cipher->name().c_str(),
+    CRYPTO_DBG("decrypted channelname %s using %s and IV = %s\n", std::string(ptext, pt.size()).c_str(), cipher->name().c_str(),
                Botan::hex_encode(IV).c_str());
     return 0;
 }

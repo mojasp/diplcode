@@ -568,7 +568,7 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
         lcm->udp_discarded_bad++;
         return 0;
     }
-    char* pkt_channel_str = malloc(lcmb->channel_size + 1); //FIXME leak
+    char* pkt_channel_str = calloc(sizeof(char*), lcmb->channel_size + 1); //FIXME leak
     lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct, lcmb->channel_size +1 , pkt_channel_str , lcmb->channel_size+1);
 
     // if the packet has no subscribers, drop the message now.
