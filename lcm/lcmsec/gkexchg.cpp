@@ -230,23 +230,30 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
         Dutta_Barua_cert db_cert{0};
         db_cert.x509_certificate_BER = MOV(*cert_ber);
         db_cert.cert_size = db_cert.x509_certificate_BER.size();
-        //BUG: sometimes self is undefined but self.cert_size is set to something
-        //Most likely we never set self, whic might happen (theory) if we dispatcha join response without yet having sent our own join? in that case managed state will not contain our own join yet. in that case what do we do? is this a design flaw?
+
         if (r == role::joining) {
             if (uid == this->uid.u) {
-                response.self = MOV(db_cert);
-                response.role = response.ROLE_JOINING;
+                return;  // Add our own cert somewhere else
             } else
                 response.certificates_joining.push_back(MOV(db_cert));
         } else if (r == role::participant)
             if (uid == this->uid.u) {
-                response.self = MOV(db_cert);
-                response.role = response.ROLE_PARTICIPANT;
+                return;  // Add our own cert somewhere else
             } else
                 response.certificates_participants.push_back(MOV(db_cert));
         else
             assert(false);
     };
+
+    const auto &self = DSA_certificate_self::getInst();
+    response.self.x509_certificate_BER = self.cert.BER_encode();
+    response.self.cert_size = response.self.x509_certificate_BER.size();
+    if (state == STATE::keyexchg_not_started) {
+        response.role = response.ROLE_JOINING;
+    } else if (state == STATE::keyexchg_successful) {
+        response.role = response.ROLE_PARTICIPANT;
+    } else
+        assert(false);
 
     // NOTE: we do not need to add uid_of_join to our managed state: We will receive our own
     // join_response anyways; so we will simply accept it when we receive it
@@ -655,6 +662,11 @@ void KeyExchangeLCMHandler::handle_JOIN_response(const lcm::ReceiveBuffer *rbuf,
     } catch (keyagree_exception &e) {
         std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
                   << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    } catch (Botan::Exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname()
+                  << " with BOTAN Exception: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
         impl.gkexchg_failure();
     }
 }
