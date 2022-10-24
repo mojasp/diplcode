@@ -217,7 +217,7 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     }
 
     auto &verif = DSA_verifier::getInst();
-    Dutta_Barua_JOIN_response response;
+    Dutta_Barua_JOIN_response response{0};
     capability cap_template(mcastgroup, channelname, {});
     enum class role { participant, joining };
 
@@ -228,8 +228,8 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
             throw uid_unknown("found no certificate for uid " + std::to_string(uid) +
                               " in certificate_store");
         Dutta_Barua_cert db_cert{0};
-        db_cert.cert_size = cert_ber->size();
         db_cert.x509_certificate_BER = MOV(*cert_ber);
+        db_cert.cert_size = db_cert.x509_certificate_BER.size();
         //BUG: sometimes self is undefined but self.cert_size is set to something
         //Most likely we never set self, whic might happen (theory) if we dispatcha join response without yet having sent our own join? in that case managed state will not contain our own join yet. in that case what do we do? is this a design flaw?
         if (r == role::joining) {
