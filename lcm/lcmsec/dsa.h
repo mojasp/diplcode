@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
+#include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 #include "lcmsec_util.h"
 
@@ -28,7 +29,9 @@ class DSA_signer {
 
   public:
     static DSA_signer &getInst(std::string keyfile = "");
-    std::vector<uint8_t> db_sign(const Dutta_Barua_message &msg) const;
+    std::vector<uint8_t> sign(const Dutta_Barua_message &msg) const;
+    std::vector<uint8_t> sign(const Dutta_Barua_JOIN &msg) const;
+    std::vector<uint8_t> sign(const Dutta_Barua_JOIN_response &msg) const;
 };
 
 /*
@@ -77,9 +80,10 @@ class DSA_verifier {
                                                      const std::optional<std::string> mcastgroup);
 
     /*
-     * get the BER-encoded certificate for a specific (mcastgroup, channelname, uid) tuple; or nullopt if no such certificate exists
+     * get the BER-encoded certificate for a specific (mcastgroup, channelname, uid) tuple; or
+     * nullopt if no such certificate exists
      */
-    [[nodiscard]] std::optional<std::vector<uint8_t>> get_certificate(const capability& cap) const;
+    [[nodiscard]] std::optional<std::vector<uint8_t>> get_certificate(const capability &cap) const;
 
     /**
      * @brief return all certificates for a given channel (BER-encoded)
@@ -87,11 +91,15 @@ class DSA_verifier {
      * @param multicast_group the group on which the channel is active
      * @param channelname channelname
      */
-    std::vector<std::pair<int, std::vector<uint8_t>>> certificates_for_channel(std::string multicast_group,
-                                      std::optional<std::string> channelname) const;
+    std::vector<std::pair<int, std::vector<uint8_t>>> certificates_for_channel(
+        std::string multicast_group, std::optional<std::string> channelname) const;
 
-    bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
-                   std::string channelname);
+    bool verify(const Dutta_Barua_message *msg, std::string multicast_group,
+                std::optional<std::string> channelname) const;
+    bool verify(const Dutta_Barua_JOIN *msg, std::string multicast_group,
+                std::optional<std::string> channelname, int uid) const;
+    bool verify(const Dutta_Barua_JOIN_response *msg, std::string multicast_group,
+                std::optional<std::string> channelname, int uid) const;
 
   private:
     DSA_verifier(std::string filename);

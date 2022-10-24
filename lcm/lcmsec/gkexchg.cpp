@@ -44,89 +44,28 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
     // channel
     add_task(std::chrono::steady_clock::now(), [this] { JOIN(); });
 
-    // prepare a timeout task - will not be called in case of success of the group key exchange, since in that
-    // case the invocation count will have increased already
+    // prepare a timeout task - will not be called in case of success of the group key exchange,
+    // since in that case the invocation count will have increased already
     add_task(std::chrono::steady_clock::now() + gkexchg_timeout, [this] {
-        std::cerr << channelname.value_or("nullopt") << ": groupkeyexchange timed out on channel, restarting..." << std::endl;
+        std::cerr << channelname.value_or("nullopt")
+                  << ": groupkeyexchange timed out on channel, restarting..." << std::endl;
         gkexchg_failure();
     });
-
-
 }
 
 Dutta_Barua_GKE::Dutta_Barua_GKE(int uid) : uid{uid, 1} {}
 Dutta_Barua_GKE::~Dutta_Barua_GKE() {}
 
-static void botan_x509_example(Dutta_Barua_message &msg)
+template <typename message_t>
+static void sign_msg(message_t &msg)
 {
     auto &signer = DSA_signer::getInst();
-    auto signature = signer.db_sign(msg);
-
-    std::cout << " verify message for test " << std::endl;
-
-    std::string cert_file = "x509v3/bob.crt";
-    std::string rootcert = "x509v3/root_ca.crt";
-
-    Botan::X509_Certificate cert(cert_file);
-    Botan::X509_Certificate root_ca(rootcert);
-
-    if (cert.check_signature(root_ca.subject_public_key()))
-        std::cout << "certificate valid\n";
-    else
-        std::cout << "certificate INVALID\n";
-
-    // Certificate is valid => check if the message is signed by that certificate
-    auto pkey = cert.subject_public_key();
-    std::cout << "algname" << pkey->algo_name() << std::endl;
-    const static std::string ecdsa_emca = "EMSA1(SHA-256)";
-    Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
-    verifier.update((const uint8_t *) &msg.u, 4);
-    verifier.update(msg.round);
-    verifier.update((const uint8_t *) msg.public_value.data(), msg.public_value.size());
-    verifier.update((const uint8_t *) &msg.d, 4);
-
-    if (verifier.check_signature(signature))
-        std::cout << "msg signature valid" << std::endl;
-    else
-        std::cout << "msg signature INVALID" << std::endl;
-
-    // check if permissions are good
-    std::string channelname = "channel1";
-    Botan::AlternativeName altname = cert.subject_alt_name();
-    bool found_permission = false;
-    std::string expected_urn;
-    std::string group_keyxchg_channel = "group_keyxchg_channel";  // workaround for now
-    std::string mcasturl = "239.255.76.67:7667";  // another workaround, only default url
-    // (=mcastgroup) allowed right now
-    if (channelname == group_keyxchg_channel) {
-        std::string expected_urn = "urn:lcmsec:gkexchg:" + mcasturl + channelname + ":2";
-    } else {
-        expected_urn = "urn:lcmsec:gkexchg_g:" + mcasturl +
-                       ":2";  // Workaround: get uid/senderid from certificate
-    }
-    for (const auto &[k, v] : altname.get_attributes()) {
-        std::cout << k << ": " << v << std::endl;
-        std::string URI = "URI";
-        if (k != URI)
-            continue;
-        if (expected_urn == v) {
-            found_permission = true;
-            break;
-        }
-    }
-    if (found_permission)
-        std::cout << "permissions exist. msg is good." << std::endl;
-    else
-        std::cout << "did not find permissions (" << expected_urn << ")for msg in certificate"
-                  << std::endl;
+    msg.sig = signer.sign(msg);
+    msg.sig_size = msg.sig.size();
 }
 
-void KeyExchangeManager::sign_and_dispatch(Dutta_Barua_message &msg)
+void KeyExchangeManager::publish(Dutta_Barua_message &msg)
 {
-    auto &signer = DSA_signer::getInst();
-    msg.sig = signer.db_sign(msg);
-
-    msg.sig_size = msg.sig.size();
     lcm.publish(groupexchg_channelname, &msg);
 }
 
@@ -145,7 +84,7 @@ static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &b
 
 void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void()> f)
 {
-    auto task = [=,this, invo_cnt = uid.d, f = MOV(f)]() {
+    auto task = [=, this, invo_cnt = uid.d, f = MOV(f)]() {
         assert(this->uid.d >= invo_cnt);
         if (invo_cnt != this->uid.d) {
             return;
@@ -240,7 +179,6 @@ void KeyExchangeManager::JOIN()
 
     Dutta_Barua_JOIN join;
 
-    join.sig_size = 0; //FIXME
     auto requested_r1start = std::chrono::steady_clock::now() + JOIN_waitperiod;
     auto requested_r1start_us =
         std::chrono::time_point_cast<std::chrono::microseconds>(requested_r1start);
@@ -249,6 +187,8 @@ void KeyExchangeManager::JOIN()
     auto &cert = DSA_certificate_self::getInst().cert;
     join.certificate.x509_certificate_BER = cert.BER_encode();
     join.certificate.cert_size = join.certificate.x509_certificate_BER.size();
+
+    sign_msg(join);
 
     std::string ch = std::string("join") + groupexchg_channelname;
     lcm.publish(ch, &join);
@@ -266,7 +206,7 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
               << std::endl;
     // Note that we do not need to test (in this method) whether or not we are a good candidate to
     // dispatch a join_response
-    //
+
     // Either we are a better candidate than the other join responses that we have so far observed -
     // in which case we will have rejected them, thus, joining_participants will *not* contain
     // uid_of join - or we are not, in which case we will have accepted their  response and thus
@@ -287,13 +227,23 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
         if (!cert_ber)
             throw uid_unknown("found no certificate for uid " + std::to_string(uid) +
                               " in certificate_store");
-        Dutta_Barua_cert db_cert;
+        Dutta_Barua_cert db_cert{0};
         db_cert.cert_size = cert_ber->size();
         db_cert.x509_certificate_BER = MOV(*cert_ber);
-        if (r == role::joining)
-            response.certificates_joining.push_back(MOV(db_cert));
-        else if (r == role::participant)
-            response.certificates_participants.push_back(MOV(db_cert));
+        //BUG: sometimes self is undefined but self.cert_size is set to something
+        //Most likely we never set self, whic might happen (theory) if we dispatcha join response without yet having sent our own join? in that case managed state will not contain our own join yet. in that case what do we do? is this a design flaw?
+        if (r == role::joining) {
+            if (uid == this->uid.u) {
+                response.self = MOV(db_cert);
+                response.role = response.ROLE_JOINING;
+            } else
+                response.certificates_joining.push_back(MOV(db_cert));
+        } else if (r == role::participant)
+            if (uid == this->uid.u) {
+                response.self = MOV(db_cert);
+                response.role = response.ROLE_PARTICIPANT;
+            } else
+                response.certificates_participants.push_back(MOV(db_cert));
         else
             assert(false);
     };
@@ -305,17 +255,16 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     for (int u : managed_state.get_joining()) {
         add_cert_to_response(u, role::joining);
     }
-    for (int i : managed_state.get_participants()) {
-        add_cert_to_response(i, role::participant);
+    for (int u : managed_state.get_participants()) {
+        add_cert_to_response(u, role::participant);
     }
 
     response.joining = response.certificates_joining.size();
     response.participants = response.certificates_participants.size();
 
-    response.sig_size = 0; //FIXME
-
     // Same note as above: it suffices to set this field in the response
-    std::chrono::steady_clock::time_point req_r1start{std::chrono::microseconds(requested_r1start_us)};
+    std::chrono::steady_clock::time_point req_r1start{
+        std::chrono::microseconds(requested_r1start_us)};
     response.timestamp_r1start_us = std::chrono::time_point_cast<std::chrono::microseconds>(
                                         earliest_time(req_r1start, managed_state.r1start()))
                                         .time_since_epoch()
@@ -326,6 +275,7 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     int us_offset = (std::rand() % (2 * td_range_us)) - td_range_us;
     response.timestamp_r1start_us += us_offset;
 
+    sign_msg(response);
     std::string ch = std::string("join_resp") + groupexchg_channelname;
     lcm.publish(ch, &response);
 
@@ -346,11 +296,27 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
               ", " + std::to_string(join_response->joining) + "}");
     };
 
-    auto &verifier = DSA_verifier::getInst();
-
-    // First: achieve consensus on participants, while adding all certificants that we have not yet
-    // observed
     std::vector<int> candidate_participants;
+    std::vector<int> candidate_joining;
+
+    auto &verifier = DSA_verifier::getInst();
+    auto remote_uid = verifier.add_certificate(join_response->self, mcastgroup, channelname);
+    if (!remote_uid)
+        return;
+
+    if (!verifier.verify(join_response, mcastgroup, channelname, *remote_uid))
+        return;
+
+    if (join_response->role == join_response->ROLE_JOINING) {
+        candidate_joining.push_back(*remote_uid);
+    } else if (join_response->role == join_response->ROLE_PARTICIPANT) {
+        candidate_participants.push_back(*remote_uid);
+    } else {
+        throw remote_faulty("wrong role parameter in join_response");
+    }
+
+    // First: achieve consensus on participants, while adding all certificants that we have not
+    // yet observed
     for (const auto &cert : join_response->certificates_participants) {
         auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
         if (!uid) {
@@ -363,9 +329,8 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
         return;
     }
 
-    // Second: achieve consensus on joining participants, while adding all certificants that we have
-    // not yet observed
-    std::vector<int> candidate_joining;
+    // Second: achieve consensus on joining participants, while adding all certificants that we
+    // have not yet observed
     for (const auto &cert : join_response->certificates_joining) {
         auto uid = verifier.add_certificate(cert, mcastgroup, channelname);
         if (!uid) {
@@ -401,6 +366,9 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
     if (!remote_uid)
         return;
 
+    if (!verifier.verify(join_msg, mcastgroup, channelname, *remote_uid))
+        return;
+
     // dispatch JOIN_response at a random time
     using namespace std::chrono;
     int avgdelay_count_us = duration_cast<microseconds>(JOIN_response_avg_delay).count();
@@ -414,8 +382,9 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
               (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
           "milliseconds");
     add_task(response_timepoint,
-                     [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_us,
-                      this] { JOIN_response(ruid, req_r1start); });
+             [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_us, this] {
+                 JOIN_response(ruid, req_r1start);
+             });
 }
 
 void Dutta_Barua_GKE::round1()
@@ -453,7 +422,8 @@ void Dutta_Barua_GKE::round1()
     db_set_public_value(msg, X);
     msg.d = this->uid.d;
 
-    sign_and_dispatch(msg);
+    sign_msg(msg);
+    publish(msg);
 }
 
 void Dutta_Barua_GKE::round2()
@@ -486,7 +456,8 @@ void Dutta_Barua_GKE::round2()
         db_set_public_value(msg, Y);
         msg.d = uid.d;
 
-        sign_and_dispatch(msg);
+        sign_msg(msg);
+        publish(msg);
     }
     r2_finished = true;
 }
@@ -633,9 +604,9 @@ void Dutta_Barua_GKE::start_join()
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
 {
-    // leave this exception for now: it should not be an exception at all, instead, the error should
-    // be signaled to the library user with an error code. However, this is will change when the API
-    // reaches a more mature stater / is designed properly
+    // leave this exception for now: it should not be an exception at all, instead, the error
+    // should be signaled to the library user with an error code. However, this is will change
+    // when the API reaches a more mature stater / is designed properly
     if (!shared_secret)
         throw std::runtime_error(
             "get_session_key(): No shared secret has been agreed upon on channel " +

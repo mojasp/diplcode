@@ -35,7 +35,7 @@ class Dutta_Barua_GKE {
     virtual ~Dutta_Barua_GKE();
 
   public:
-    virtual void sign_and_dispatch(Dutta_Barua_message &msg) = 0;
+    virtual void publish(Dutta_Barua_message &msg) = 0;
     virtual void gkexchg_finished() = 0;          // hook for child to override
     [[nodiscard]] virtual STATE &getState() = 0;  // hook for child to override
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() = 0;
@@ -167,7 +167,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     eventloop &evloop;
     lcm::LCM &lcm;
 
-    void sign_and_dispatch(Dutta_Barua_message &msg) override;
+    void publish(Dutta_Barua_message &msg) override;
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
 
     inline void debug(std::string msg) override
