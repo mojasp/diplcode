@@ -170,8 +170,10 @@ void KeyExchangeManager::add_task(std::function<void()> f)
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
     managed_state.prepare_join();
+    state = STATE::keyexchg_in_progress;
+
     auto &verifier = DSA_verifier::getInst();
-    if (!verifier.db_verify(msg, mcastgroup, channelname.value_or(mcastgroup))) {
+    if (!verifier.verify(msg, mcastgroup, channelname)) {
         debug("signature verification failed");
         return;
     }
@@ -185,10 +187,8 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
             auto remote_proto_uid = managed_state.uid_to_protocol_uid(msg->u);
             if (remote_proto_uid == left)
                 r1_messages.left = *msg;
-            else if (remote_proto_uid == right)
+            if (remote_proto_uid == right)
                 r1_messages.right = *msg;
-            else
-                assert(false);  /// unreachable
         } else {
             if (msg->round != 2) {
                 auto err = "lcmsec: keyexchange on channel " + groupexchg_channelname +
@@ -200,8 +200,8 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
         }
 
         if (r1_messages.left && r1_messages.right &&
-            r2_messages.size() == managed_state.num_joining()) {
-            // If we have everything we can immediately compute the key
+            r2_messages.size() == managed_state.active_participants()) {
+            // All condition for calculating the key are met
             round2();
             computeKey_passive();
         }
