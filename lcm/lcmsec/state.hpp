@@ -6,13 +6,14 @@ namespace lcmsec_impl {
 
 enum class STATE : int {
     keyexchg_not_started = 0,
+    consensus_phase,
     keyexchg_in_progress,
     keyexchg_successful,
     ENUMSIZE
 };
 inline const char *state_name(STATE s)
 {
-    static const char *STATE_names[] = {"keyexchg_not_started", "in_progress",
+    static const char *STATE_names[] = {"keyexchg_not_started", "consensus_phase", "in_progress",
                                         "keyexchg_successful"};
     static_assert(sizeof(STATE_names) / sizeof(char *) == static_cast<int>(STATE::ENUMSIZE),
                   "sizes dont match");

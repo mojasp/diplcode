@@ -4,6 +4,7 @@
 #include <botan/bigint.h>
 #include <botan/dh.h>
 #include <botan/ecdh.h>
+#include <tracy/TracyC.h>
 
 #include <cassert>
 #include <map>
@@ -75,7 +76,7 @@ class Dutta_Barua_GKE {
     } r1_messages;
 
     std::optional<Botan::PointGFp> shared_secret;
-    bool has_new_key; //FIXME synchronization?
+    bool has_new_key;  // FIXME synchronization?
 
     virtual void debug(std::string msg) = 0;
 
@@ -107,6 +108,7 @@ class Dutta_Barua_GKE {
 
 class KeyExchangeManager : public Dutta_Barua_GKE {
   private:
+    TracyCZoneCtx gkexchg_context;
 
   public:
     // Recovery management:
@@ -147,6 +149,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     // Not used for publishing, but to check permissions of the certificates on incoming messages
     std::optional<std::string> channelname;
+    std::string debug_channelname;
     std::string mcastgroup;
 
     std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
@@ -159,15 +162,8 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() override { return role; }
 
-    inline void gkexchg_failure()
-    {
-        state = STATE::keyexchg_not_started;
-        role = JOIN_ROLE::invalid;
-        uid.d++;
-        cleanup_intermediates();
-        managed_state.gke_failure();
-        add_task([=] {JOIN();});
-    }
+    void gkexchg_failure();
+
   private:
     eventloop &evloop;
     lcm::LCM &lcm;
@@ -180,17 +176,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         CRYPTO_DBG("u%i: ch:%s %s\n", uid.u, groupexchg_channelname.c_str(), msg.c_str());
     }
 
-    inline void gkexchg_finished() override
-    {
-        state = STATE::keyexchg_successful;
-        role = JOIN_ROLE::invalid;
-        uid.d++;
-        evloop.channel_finished();
-        has_new_key = true;
-        cleanup_intermediates();
-        managed_state.gke_success();
-    }
-
+    void gkexchg_finished() override;
 };
 
 /**

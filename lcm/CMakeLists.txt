@@ -2,6 +2,8 @@ if(UNIX)
   find_package(Threads)
 endif()
 
+include(FetchContent)
+
 set(lcm_sources
   eventlog.c
   lcm.c
@@ -55,6 +57,23 @@ add_library(lcm-coretypes INTERFACE)
 add_library(lcm-static STATIC ${lcm_sources})
 add_library(lcm SHARED ${lcm_sources})
 
+if(USE_TRACY)
+    option(TRACY_ENABLE "" ON)
+    option(TRACY_FIBERS "" ON)
+else()
+    #disable the tracy_enable macro otherwise we get linker error
+    option(TRACY_ENABLE "" OFF)
+endif()
+#we always need the tracy header - will cause no runtime overhead if tracy is disabled
+FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(tracy)
+
 foreach(lcm_lib lcm lcm-static)
   target_compile_definitions(${lcm_lib} PRIVATE
     _FILE_OFFSET_BITS=64
@@ -79,6 +98,13 @@ foreach(lcm_lib lcm lcm-static)
     Botan2::Botan2
     ${CMAKE_THREAD_LIBS_INIT}
   )
+
+  if(USE_TRACY)
+      target_link_libraries(${lcm_lib} PRIVATE TracyClient)
+  else()
+      target_include_directories(${lcm_lib} PRIVATE ${tracy_SOURCE_DIR}/public) #we still need the tracy header
+  endif()
+
 endforeach()
 
 generate_export_header(lcm STATIC_DEFINE LCM_STATIC)
@@ -92,11 +118,14 @@ target_include_directories(lcm-coretypes INTERFACE
   $<BUILD_INTERFACE:${lcm_SOURCE_DIR}>
 )
 
-install(TARGETS lcm-coretypes lcm-static lcm
-  EXPORT lcmTargets
-  RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib${LIB_SUFFIX}
-  ARCHIVE DESTINATION lib${LIB_SUFFIX}
-  PUBLIC_HEADER DESTINATION include/lcm
-  INCLUDES DESTINATION include
-)
+#Tracy is used only for local/development builds, not as part of install builds
+if(NOT USE_TRACY)
+    install(TARGETS lcm-coretypes lcm-static lcm
+        EXPORT lcmTargets
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib${LIB_SUFFIX}
+        ARCHIVE DESTINATION lib${LIB_SUFFIX}
+        PUBLIC_HEADER DESTINATION include/lcm
+        INCLUDES DESTINATION include
+        )
+endif()

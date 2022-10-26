@@ -11,11 +11,13 @@
 #include <botan/pkix_types.h>
 #include <botan/point_gfp.h>
 #include <botan/pubkey.h>
+#include <tracy/TracyC.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <numeric>
+#include <tracy/Tracy.hpp>
 
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmexcept.hpp"
@@ -25,6 +27,16 @@
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
+
+// assign tracy ctx in a way that doesn't break compilation when tracy is not enabled
+#ifdef TRACY_ENABLE
+#define TRACY_ASSIGN_CTX(to, from) \
+    do {                           \
+        to = from;                 \
+    } while (0)
+#else
+#define TRACY_ASSIGN_CTX(to, from) ;
+#endif
 
 #define LCMSEC_CHECKSTATE(...)        \
     do {                              \
@@ -41,6 +53,8 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
       evloop(ev_loop),
       lcm(lcm)
 {
+    debug_channelname = channelname.value_or("gkechg_g");
+
     // start join later, to avoid race condition in which we JOIN, accept the JOIN, and finish the
     // gkexchg before being subscribed with our LCM instance and able to receive on the management
     // channel
@@ -87,6 +101,7 @@ const Botan::EC_Group Dutta_Barua_GKE::group{"secp256r1"};
 void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void()> f)
 {
     auto task = [=, this, invo_cnt = uid.d, f = MOV(f)]() {
+        TracyFiberEnter(debug_channelname.c_str());
         assert(this->uid.d >= invo_cnt);
         if (invo_cnt != this->uid.d) {
             return;
@@ -99,6 +114,7 @@ void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void(
                       << " ! Restarting Key agreement...." << std::endl;
             gkexchg_failure();
         }
+        TracyFiberLeave;
     };
     evloop.push_task(tp, task);
 };
@@ -178,6 +194,12 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 void KeyExchangeManager::JOIN()
 {
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started);
+    // Since a handcrafted cooperative multitasking approach is used for doing the keyagreement on
+    // multiple channels simultaneously, we need to use the tracy-facilites for fibers
+    TracyCZoneN(ctx, "group key agreement", 1);
+    gkexchg_context = ctx;
+
+    ZoneScopedN("JOIN");
 
     Dutta_Barua_JOIN join;
 
@@ -202,6 +224,7 @@ void KeyExchangeManager::JOIN()
 void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1start_us)
 {
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+    ZoneScopedN("JOIN_response");
 
     std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
               << managed_state.get_joining() << " : " << managed_state.get_participants()
@@ -296,11 +319,13 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
 {
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
 
-    auto dbg_reject = [=](std::string msg) {
+    ZoneScopedN("on_JOIN_response");
+
+    auto dbg_reject = [=, this](std::string msg) {
         debug("rejecting join_response with {" + std::to_string(join_response->participants) +
               ", " + std::to_string(join_response->joining) + "} :" + msg);
     };
-    auto dbg_accept = [=] {
+    auto dbg_accept = [=, this] {
         debug("accepting join_response with {" + std::to_string(join_response->participants) +
               ", " + std::to_string(join_response->joining) + "}");
     };
@@ -363,12 +388,20 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     }
     dbg_accept();
 
-    add_task(requested_starting_time, [=] { start_join(); });
+    add_task(requested_starting_time, [this] { start_join(); });
 }
 
 void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 {
+#ifdef TRACY_ENABLE
+    //a bit hacky, currently there is no good way to detect when we are starting a key agreement initiated by a remote
+    if (managed_state.r1start() == std::nullopt) {
+        TracyCZoneN(tracy_ctx, "group key agreement", 1)
+        gkexchg_context=tracy_ctx;
+    }
+#endif
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+    ZoneScopedN("on_JOIN");
 
     auto &verifier = DSA_verifier::getInst();
     auto remote_uid = verifier.add_certificate(join_msg->certificate, mcastgroup, channelname);
@@ -398,6 +431,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 
 void Dutta_Barua_GKE::round1()
 {
+    ZoneScopedN("round1");
     auto &verifier = DSA_verifier::getInst();
     for (const auto &e : managed_state.uid_view().get()) {
         std::cout << e << "\t";
@@ -439,6 +473,7 @@ void Dutta_Barua_GKE::round1()
 
 void Dutta_Barua_GKE::round2()
 {
+    ZoneScopedN("round2");
     assert(r1_messages.left && r1_messages.right);
     assert(!r2_finished);
 
@@ -472,6 +507,7 @@ void Dutta_Barua_GKE::round2()
 void Dutta_Barua_GKE::computeKey_passive()
 {
     std::map<int, Botan::PointGFp> right_keys;
+    TracyCZoneN(tracy_ctx, "computeKey_passive", 1);
 
     auto wrapindex = [sz = managed_state.active_participants()](int i) {
         return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
@@ -501,9 +537,11 @@ void Dutta_Barua_GKE::computeKey_passive()
     // correctness check
     int lastindex = wrapindex(protocol_uid + managed_state.active_participants() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
+
     if (correctness)
         debug("group key exchange successful!");
     else {
+        TracyCZoneEnd(tracy_ctx);
         throw keyagree_exception("key computation correctness check failed");
     }
 
@@ -512,12 +550,14 @@ void Dutta_Barua_GKE::computeKey_passive()
         *shared_secret += kr.second;
     }
 
+    TracyCZoneEnd(tracy_ctx);
     managed_state.gke_success();
     gkexchg_finished();
 }
 
 void Dutta_Barua_GKE::computeKey()
 {
+    TracyCZoneN(tracy_ctx, "computeKey_passive", 1);
     for (auto &[i, incoming] : r2_messages) {
         partial_session_id.push_back(
             user_id{managed_state.uid_to_protocol_uid(incoming.u), incoming.d});
@@ -553,6 +593,8 @@ void Dutta_Barua_GKE::computeKey()
     // correctness check
     int lastindex = wrapindex(protocol_uid + managed_state.active_participants() - 1);
     bool correctness = right_keys[lastindex] == r1_results.left;
+
+    TracyCZoneEnd(tracy_ctx);
     if (correctness)
         debug("group key exchange successful!");
     else {
@@ -619,6 +661,32 @@ void Dutta_Barua_GKE::start_join()
     }
 }
 
+void KeyExchangeManager::gkexchg_failure()
+{
+    auto atexit = finally([&] { TracyCZoneEnd(gkexchg_context); });
+    ZoneScopedN("gkexchg_failure");
+
+    state = STATE::keyexchg_not_started;
+    role = JOIN_ROLE::invalid;
+    uid.d++;
+    cleanup_intermediates();
+    managed_state.gke_failure();
+    add_task([this] { JOIN(); });
+}
+void KeyExchangeManager::gkexchg_finished()
+{
+    auto atexit = finally([&] { TracyCZoneEnd(gkexchg_context); });
+    ZoneScopedN("gkexchg_success");
+
+    state = STATE::keyexchg_successful;
+    role = JOIN_ROLE::invalid;
+    uid.d++;
+    evloop.channel_finished();
+    has_new_key = true;
+    cleanup_intermediates();
+    managed_state.gke_success();
+}
+
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
 {
     // leave this exception for now: it should not be an exception at all, instead, the error
@@ -645,6 +713,7 @@ KeyExchangeLCMHandler::KeyExchangeLCMHandler(capability cap, eventloop &ev_loop,
 void KeyExchangeLCMHandler::handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                           const Dutta_Barua_message *msg)
 {
+    TracyFiberEnter(impl.debug_channelname.c_str());
     try {
         impl.on_msg(msg);
     } catch (keyagree_exception &e) {
@@ -657,11 +726,13 @@ void KeyExchangeLCMHandler::handleMessage(const lcm::ReceiveBuffer *rbuf, const 
                   << std::endl;
         impl.gkexchg_failure();
     }
+    TracyFiberLeave;
 }
 
 void KeyExchangeLCMHandler::handle_JOIN(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                         const Dutta_Barua_JOIN *join_msg)
 {
+    TracyFiberEnter(impl.debug_channelname.c_str());
     try {
         impl.onJOIN(join_msg);
     } catch (keyagree_exception &e) {
@@ -674,12 +745,14 @@ void KeyExchangeLCMHandler::handle_JOIN(const lcm::ReceiveBuffer *rbuf, const st
                   << std::endl;
         impl.gkexchg_failure();
     }
+    TracyFiberLeave;
 }
 
 void KeyExchangeLCMHandler::handle_JOIN_response(const lcm::ReceiveBuffer *rbuf,
                                                  const std::string &chan,
                                                  const Dutta_Barua_JOIN_response *join_response)
 {
+    TracyFiberEnter(impl.debug_channelname.c_str());
     try {
         impl.on_JOIN_response(join_response);
     } catch (keyagree_exception &e) {
@@ -692,6 +765,7 @@ void KeyExchangeLCMHandler::handle_JOIN_response(const lcm::ReceiveBuffer *rbuf,
                   << std::endl;
         impl.gkexchg_failure();
     }
+    TracyFiberLeave;
 }
 
 }  // namespace lcmsec_impl
