@@ -112,6 +112,7 @@ public:
         auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
 
         struct timeval timeout = { 
+            //FIXME: is this a bug in cases of timeouts over one seconds? => i think we need to truncate microseconds...
             std::max<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(next_task_delta).count(), 0),
             std::max<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(next_task_delta).count(), 0)
         };//ensure timeouts are not below 0
