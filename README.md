@@ -38,7 +38,7 @@ to create an LCM instance that has security enabled. This will block until the g
 * The format of the SAN is a URI of the form: `urn:lcmsec:gkexchg:<mcastgroup>:<port>:<channelname>:<user_id>` 
     * example: ` urn:lcmsec:gkexchg:239.255.76.67:7667:channel1:4` (for a channel)
     * for the permission to be part of a multicast group, use the special string "gkexchg_g" and omit the channelname, for instance: ` urn:lcmsec:gkexchg_g:239.255.76.67:7667:4`
-* call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (right now: joining and rejoining after crash) are needed. If the groups are static
+* call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (right now: joining and rejoining after crash) are needed. If the groups are static after the initial key agreement, this is not needed.
     * Note: in the future it should also be able to get a file descriptor one can integrate into an eventloop with select to perform a nonblocking call whenever a keyagreement action is needed. 
     * another interface that should be provided a simple nonblocking one that the user can poll or one with a timeout
 
