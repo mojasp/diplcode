@@ -101,7 +101,10 @@ const Botan::EC_Group Dutta_Barua_GKE::group{"secp256r1"};
 void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void()> f)
 {
     auto task = [=, this, invo_cnt = uid.d, f = MOV(f)]() {
+        // Since a handcrafted cooperative multitasking approach is used for doing the keyagreement
+        // on multiple channels simultaneously, we need to use the tracy-facilites for fibers
         TracyFiberEnter(debug_channelname.c_str());
+
         assert(this->uid.d >= invo_cnt);
         if (invo_cnt != this->uid.d) {
             return;
@@ -126,8 +129,11 @@ void KeyExchangeManager::add_task(std::function<void()> f)
 
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
-    managed_state.prepare_join();
-    state = STATE::keyexchg_in_progress;
+    LCMSEC_CHECKSTATE(STATE::keyexchg_in_progress, STATE::consensus_phase);
+    if (state == STATE::consensus_phase) {
+        managed_state.prepare_join();
+        state = STATE::keyexchg_in_progress;
+    }
 
     auto &verifier = DSA_verifier::getInst();
     if (!verifier.verify(msg, mcastgroup, channelname)) {
@@ -193,12 +199,19 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 
 void KeyExchangeManager::JOIN()
 {
-    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started);
-    // Since a handcrafted cooperative multitasking approach is used for doing the keyagreement on
-    // multiple channels simultaneously, we need to use the tracy-facilites for fibers
-    TracyCZoneN(ctx, "group key agreement", 1);
-    gkexchg_context = ctx;
-
+    // A Join should be permitted even if we are already in the consensus phase; since we might have
+    // observed an earlier join(advanced to the consensus phase); but not had the opportunity to
+    // dispatchn our own yet
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase);
+    if (state != STATE::consensus_phase) {
+        TracyCZoneN(ctx, "group key agreement", 1);
+        TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+        state = STATE::consensus_phase;
+        if (state == STATE::keyexchg_not_started)
+            role = JOIN_ROLE::joining;
+        else
+            role = JOIN_ROLE::active;
+    }
     ZoneScopedN("JOIN");
 
     Dutta_Barua_JOIN join;
@@ -218,12 +231,10 @@ void KeyExchangeManager::JOIN()
     lcm.publish(ch, &join);
 }
 
-/*
- * issue a join response if a group exists already
- */
 void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1start_us)
 {
-    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+    // Dispatching a join response is only valid if we are in the consensus phase
+    LCMSEC_CHECKSTATE(STATE::consensus_phase);
     ZoneScopedN("JOIN_response");
 
     std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
@@ -244,9 +255,9 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     auto &verif = DSA_verifier::getInst();
     Dutta_Barua_JOIN_response response{0};
     capability cap_template(mcastgroup, channelname, {});
-    enum class role { participant, joining };
+    enum class consensus_role { participant, joining };
 
-    auto add_cert_to_response = [&](int uid, role r) {
+    auto add_cert_to_response = [&](int uid, consensus_role r) {
         cap_template.uid = uid;
         auto cert_ber = verif.get_certificate(cap_template);
         if (!cert_ber)
@@ -256,12 +267,12 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
         db_cert.x509_certificate_BER = MOV(*cert_ber);
         db_cert.cert_size = db_cert.x509_certificate_BER.size();
 
-        if (r == role::joining) {
+        if (r == consensus_role::joining) {
             if (uid == this->uid.u) {
                 return;  // Add our own cert somewhere else
             } else
                 response.certificates_joining.push_back(MOV(db_cert));
-        } else if (r == role::participant)
+        } else if (r == consensus_role::participant)
             if (uid == this->uid.u) {
                 return;  // Add our own cert somewhere else
             } else
@@ -273,22 +284,29 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     const auto &self = DSA_certificate_self::getInst();
     response.self.x509_certificate_BER = self.cert.BER_encode();
     response.self.cert_size = response.self.x509_certificate_BER.size();
-    if (state == STATE::keyexchg_not_started) {
+
+    // This is a bit hacky unfortunately - improve later - join role is initially set during the
+    // transition to the consensus_phase state (but only to either active or passive) We use this
+    // information here, then later use join_role differently: to differentiate between active,
+    // passive and joining participants
+    assert(role != JOIN_ROLE::invalid);
+    assert(role != JOIN_ROLE::passive);
+    if (role == JOIN_ROLE::joining) {
         response.role = response.ROLE_JOINING;
-    } else if (state == STATE::keyexchg_successful) {
+    } else if (role == JOIN_ROLE::active) {
         response.role = response.ROLE_PARTICIPANT;
     } else
         assert(false);
 
     // NOTE: we do not need to add uid_of_join to our managed state: We will receive our own
     // join_response anyways; so we will simply accept it when we receive it
-    add_cert_to_response(uid_of_join, role::joining);
+    add_cert_to_response(uid_of_join, consensus_role::joining);
 
     for (int u : managed_state.get_joining()) {
-        add_cert_to_response(u, role::joining);
+        add_cert_to_response(u, consensus_role::joining);
     }
     for (int u : managed_state.get_participants()) {
-        add_cert_to_response(u, role::participant);
+        add_cert_to_response(u, consensus_role::participant);
     }
 
     response.joining = response.certificates_joining.size();
@@ -317,7 +335,18 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
 
 void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_response)
 {
-    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase,
+                      STATE::keyexchg_successful);
+    if (state != STATE::consensus_phase) {
+        state = STATE::consensus_phase;
+        TracyCZoneN(ctx, "group key agreement", 1);
+        TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+        state = STATE::consensus_phase;
+        if (state == STATE::keyexchg_not_started)
+            role = JOIN_ROLE::joining;
+        else
+            role = JOIN_ROLE::active;
+    }
 
     ZoneScopedN("on_JOIN_response");
 
@@ -393,14 +422,19 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
 
 void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 {
-#ifdef TRACY_ENABLE
-    //a bit hacky, currently there is no good way to detect when we are starting a key agreement initiated by a remote
-    if (managed_state.r1start() == std::nullopt) {
-        TracyCZoneN(tracy_ctx, "group key agreement", 1)
-        gkexchg_context=tracy_ctx;
+    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase,
+                      STATE::keyexchg_successful);
+    if (checkState(STATE::keyexchg_not_started, STATE::keyexchg_successful)) {
+        state = STATE::consensus_phase;
+        TracyCZoneN(ctx, "group key agreement", 1);
+        TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+        state = STATE::consensus_phase;
+        if (state == STATE::keyexchg_not_started)
+            role = JOIN_ROLE::joining;
+        else
+            role = JOIN_ROLE::active;
     }
-#endif
-    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
+
     ZoneScopedN("on_JOIN");
 
     auto &verifier = DSA_verifier::getInst();
@@ -624,10 +658,9 @@ void Dutta_Barua_GKE::cleanup_intermediates()
 
 void Dutta_Barua_GKE::start_join()
 {
-    LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::keyexchg_successful);
-    state = STATE::keyexchg_in_progress;
-
+    LCMSEC_CHECKSTATE(STATE::consensus_phase);
     managed_state.prepare_join();
+    state = STATE::keyexchg_in_progress;
 
     if (managed_state.num_participants() < 3) {
         x_i.reset();

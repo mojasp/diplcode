@@ -25,12 +25,6 @@
 
 namespace lcmsec_impl {
 
-/*
- * there is  abit of more refactoring to do:
- *  * only use protocol uid's in this class instead of trnaslating
- *  * maybe use ragel to implement the state machine - in any case the state logic is not finished
- * at this point
- */
 class Dutta_Barua_GKE {
   public:
     Dutta_Barua_GKE(int uid);
