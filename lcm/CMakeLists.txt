@@ -19,6 +19,12 @@ set(lcm_sources
   lcmsec/dsa.cpp
   lcmsec/managed_state.cpp
   lcmsec/protocol_uid.cpp
+  lcmsec/crypto_wrapper.h
+  lcmsec/gkexchg.h
+  lcmsec/dsa.h
+  lcmsec/eventloop.hpp
+  lcmsec/managed_state.hpp
+  lcmsec/protocol_uid.hpp
 )
 
 set(CMAKE_CXX_STANDARD 20)
