@@ -13,6 +13,17 @@
 #include "lcm-cpp.hpp"
 #include "lcmsec_util.h"
 
+#ifdef WIN32
+#include <winsock2.h>
+
+#include "windows/WinPorting.h"
+#else
+#include <sys/select.h>
+typedef int SOCKET;
+#endif
+
+
+
 namespace lcmsec_impl {
 /*
  * Brief explanation of the eventloop logic
