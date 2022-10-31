@@ -67,7 +67,7 @@ bool GkexchgManagedState::process_joining(const std::vector<int> *candidate_join
 bool GkexchgManagedState::process_timestamp(time_point tp)
 {
     assert(!locked);
-    assert(process_state.next = _process_state::STATE::tp);
+    assert(process_state.next == _process_state::STATE::tp);
     assert(process_state.candidate_participants);
     assert(process_state.candidate_joining);
 
