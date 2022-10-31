@@ -1,5 +1,7 @@
-#include "lcmsec/protocol_uid.hpp"
 #include <cassert>
+#include <string>
+#include <stdint.h>
+#include "lcmsec/protocol_uid.hpp"
 #include "lcmsec/lcmexcept.hpp"
 
 namespace lcmsec_impl{
