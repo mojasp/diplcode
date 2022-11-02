@@ -1,7 +1,6 @@
 #ifndef CRYPTOWRAPPER_HPP
 #define CRYPTOWRAPPER_HPP 
 
-#include <unistd.h>
 #include <stdint.h>
 
 #include "lcm.h"

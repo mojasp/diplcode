@@ -17,14 +17,14 @@ class Dutta_Barua_message
     public:
         int32_t    u;
 
+        /// either one or two
         int8_t     round;
 
-        /// either one or two
+        /// public value to the chosen secret (X in round1, Y in round 2)
         int32_t    public_value_size;
 
         std::vector< uint8_t > public_value;
 
-        /// public value to the chosen secret (X in round1, Y in round 2)
         int32_t    d;
 
         int32_t    sig_size;

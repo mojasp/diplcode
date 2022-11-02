@@ -13,6 +13,17 @@
 #include "lcm-cpp.hpp"
 #include "lcmsec_util.h"
 
+#ifdef WIN32
+#include <winsock2.h>
+
+#include "windows/WinPorting.h"
+#else
+#include <sys/select.h>
+typedef int SOCKET;
+#endif
+
+
+
 namespace lcmsec_impl {
 /*
  * Brief explanation of the eventloop logic
@@ -112,6 +123,7 @@ public:
         auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
 
         struct timeval timeout = { 
+            //FIXME: is this a bug in cases of timeouts over one seconds? => i think we need to truncate microseconds...
             std::max<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(next_task_delta).count(), 0),
             std::max<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(next_task_delta).count(), 0)
         };//ensure timeouts are not below 0
@@ -121,7 +133,7 @@ public:
             lcm.handle();  // guaranteed to be nonblocking
         }
         if (status < 0) {
-            throw std::runtime_error("select error: " + std::string(strerror(errno)));
+            throw std::runtime_error("lcmsec: select error in eventloop: " + std::string(strerror(errno)));
         }
     }
 

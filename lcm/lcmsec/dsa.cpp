@@ -61,13 +61,12 @@ struct custom_hash<capability> {
 std::vector<capability> capability::from_certificate(Botan::X509_Certificate &cert)
 {
     std::string URI = "URI";
-    const std::string urn_prefix = "urn:lcmsec:gkexchg";
+    static const std::string urn_prefix = "urn:lcmsec:gkexchg";
     auto altname = cert.subject_alt_name();
 
     std::vector<capability> capabilities;
 
     int i{0};
-    // we can assume
     for (const auto &[k, v] : altname.get_attributes()) {
         if (k != URI)
             continue;
@@ -115,7 +114,7 @@ DSA_signer &DSA_signer::getInst(std::string keyfile)
     return inst;
 }
 
-std::vector<uint8_t> DSA_signer::db_sign(const Dutta_Barua_message &msg) const
+std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_message &msg) const
 {
     Botan::AutoSeeded_RNG rng;
     auto signer = Botan::PK_Signer(*key, rng, ecdsa_emca);
@@ -127,6 +126,36 @@ std::vector<uint8_t> DSA_signer::db_sign(const Dutta_Barua_message &msg) const
 
     return signer.signature(rng);
 }
+std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_JOIN &msg) const
+{
+    Botan::AutoSeeded_RNG rng;
+    auto signer = Botan::PK_Signer(*key, rng, ecdsa_emca);
+
+    signer.update((const uint8_t *) &msg.certificate.cert_size, 4);
+    signer.update(msg.certificate.x509_certificate_BER);
+    signer.update((const uint8_t *) &msg.timestamp_r1start_us, 8);
+
+    return signer.signature(rng);
+}
+
+std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_JOIN_response &msg) const
+{
+    Botan::AutoSeeded_RNG rng;
+    auto signer = Botan::PK_Signer(*key, rng, ecdsa_emca);
+
+    signer.update((const uint8_t *) &msg.participants, 4);
+    for (const auto &e : msg.certificates_participants) {
+        signer.update((const uint8_t *) &e.cert_size, 4);
+        signer.update(e.x509_certificate_BER);
+    }
+    signer.update((const uint8_t *) &msg.joining, 4);
+    for (const auto &e : msg.certificates_joining) {
+        signer.update((const uint8_t *) &e.cert_size, 4);
+        signer.update(e.x509_certificate_BER);
+    }
+    signer.update((const uint8_t *) &msg.timestamp_r1start_us, 8);
+    return signer.signature(rng);
+}
 
 class DSA_verifier::impl {
   private:
@@ -136,8 +165,42 @@ class DSA_verifier::impl {
     std::unordered_map<capability, Botan::X509_Certificate, custom_hash<capability>>
         certificate_store;
 
+    Botan::Public_Key *lookup_public_key(std::string multicast_group, std::optional<std::string> channelname,
+                                         int uid) const
+    {
+        // // look for a certificate with the desired capabilities
+        // std::optional<std::string> optchannel =
+        //     (channelname == std::string("239.255.76.67:7667"))
+        //         ? std::nullopt
+        //         : std::optional<std::string>(channelname);  // quick hack as workaround for now
+
+        capability desired_cap = {MOV(multicast_group), MOV(channelname), uid};
+        auto cert_iter = certificate_store.find(desired_cap);
+        if (cert_iter == certificate_store.end()) {
+            CRYPTO_DBG(
+                "found no certificate for needed permissions of the incoming message (%s: %s: "
+                "%i)\n",
+                desired_cap.mcasturl.c_str(), desired_cap.channelname.value_or(std::string("nullopt")).c_str(), uid);
+            std::cout << "sz: " << certificate_store.size() << std::endl;
+            return nullptr;
+        }
+
+        auto cert = cert_iter->second;
+
+        // use cert to check the signature of the message
+        return cert.subject_public_key();
+    }
+
   public:
     impl(std::string filename) : root_ca(filename) {}
+
+    [[nodiscard]] std::optional<std::vector<uint8_t>> get_certificate(const capability &cap) const
+    {
+        const auto &e = certificate_store.find(cap);
+        if (e == certificate_store.end())
+            return {};
+        return e->second.BER_encode();
+    }
 
     [[nodiscard]] std::optional<int> add_certificate(const Dutta_Barua_cert &encoded_cert,
                                                      const std::string &mcastgroup,
@@ -164,46 +227,31 @@ class DSA_verifier::impl {
         return uid;
     }
 
-    std::vector<std::pair<int, std::vector<uint8_t>>> certificates_for_channel(std::string multicast_group,
-                                      std::optional<std::string> channelname) const
+    std::vector<std::pair<int, std::vector<uint8_t>>> certificates_for_channel(
+        std::string multicast_group, std::optional<std::string> channelname) const
     {
         std::vector<std::pair<int, std::vector<uint8_t>>> certificates;
 
-        //Note that while the certificates in our store are not unique (multiple shared_ptr's point to the same certificate), they are unique when considering a single channel
+        // Note that while the certificates in our store are not unique (multiple shared_ptr's point
+        // to the same certificate), they are unique when considering a single channel
         for (auto &cap : certificate_store) {
             if (cap.first.mcasturl == multicast_group &&
-                (cap.first.channelname == channelname || (!cap.first.channelname && !channelname))) {
-                auto& certificate = cap.second;
+                (cap.first.channelname == channelname ||
+                 (!cap.first.channelname && !channelname))) {
+                auto &certificate = cap.second;
                 certificates.emplace_back(std::make_pair(cap.first.uid, certificate.BER_encode()));
             }
         }
-        return certificates; //not expensive, guaranteed RVO
+        return certificates;  // not expensive, guaranteed RVO
     }
 
-    bool db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
-                   std::string channelname) const
+    bool verify(const Dutta_Barua_message *msg, std::string multicast_group,
+                   std::optional<std::string> channelname) const
     {
-        // look for a certificate with the desired capabilities
-        std::optional<std::string> optchannel =
-            (channelname == std::string("239.255.76.67:7667"))
-                ? std::nullopt
-                : std::optional<std::string>(channelname);  // quick hack as workaround for now
-
-        capability desired_cap = {MOV(multicast_group), MOV(optchannel), msg->u};
-        auto cert_iter = certificate_store.find(desired_cap);
-        if (cert_iter == certificate_store.end()) {
-            CRYPTO_DBG(
-                "found no certificate for needed permissions of the incoming message (%s: %s: "
-                "%i)\n",
-                desired_cap.mcasturl.c_str(), channelname.c_str(), msg->u);
-            std::cout << "sz: " << certificate_store.size() << std::endl;
+        Botan::Public_Key *pkey = lookup_public_key(MOV(multicast_group), MOV(channelname), msg->u);
+        if (!pkey)
             return false;
-        }
 
-        auto cert = cert_iter->second;
-
-        // use cert to check the signature of the message
-        auto pkey = cert.subject_public_key();
         Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
 
         verifier.update((const uint8_t *) &msg->u, 4);
@@ -212,11 +260,53 @@ class DSA_verifier::impl {
         verifier.update((const uint8_t *) &msg->d, 4);
 
         if (!verifier.check_signature((const uint8_t *) msg->sig.data(), msg->sig_size)) {
-            CRYPTO_DBG(
-                "signature check failed for msg from signed by (%s: %s: "
-                "%i)",
-                desired_cap.mcasturl.c_str(), channelname.c_str(), msg->u);
+            return false;
+        }
 
+        return true;
+    }
+    bool verify(const Dutta_Barua_JOIN *msg, std::string multicast_group, std::optional<std::string> channelname,
+                int uid)
+    {
+        Botan::Public_Key *pkey = lookup_public_key(MOV(multicast_group), MOV(channelname), uid);
+        if (!pkey)
+            return false;
+
+        Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
+
+        verifier.update((const uint8_t *) &msg->certificate.cert_size, 4);
+        verifier.update(msg->certificate.x509_certificate_BER);
+        verifier.update((const uint8_t *) &msg->timestamp_r1start_us, 8);
+
+        if (!verifier.check_signature((const uint8_t *) msg->sig.data(), msg->sig_size)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool verify(const Dutta_Barua_JOIN_response *msg, std::string multicast_group,
+                                std::optional<std::string> channelname, int uid) const
+    {
+        Botan::Public_Key *pkey = lookup_public_key(MOV(multicast_group), MOV(channelname), uid);
+        if (!pkey)
+            return false;
+
+        Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
+
+        verifier.update((const uint8_t *) &msg->participants, 4);
+        for (const auto &e : msg->certificates_participants) {
+            verifier.update((const uint8_t *) &e.cert_size, 4);
+            verifier.update(e.x509_certificate_BER);
+        }
+        verifier.update((const uint8_t *) &msg->joining, 4);
+        for (const auto &e : msg->certificates_joining) {
+            verifier.update((const uint8_t *) &e.cert_size, 4);
+            verifier.update(e.x509_certificate_BER);
+        }
+        verifier.update((const uint8_t *) &msg->timestamp_r1start_us, 8);
+
+        if (!verifier.check_signature((const uint8_t *) msg->sig.data(), msg->sig_size)) {
             return false;
         }
 
@@ -239,16 +329,33 @@ DSA_verifier::DSA_verifier(std::string filename) : pImpl(std::make_unique<impl>(
     return pImpl->add_certificate(cert, mcastgroup, channelname);
 }
 
-std::vector<std::pair<int, std::vector<uint8_t>>> DSA_verifier::certificates_for_channel(std::string multicast_group,
-                                                std::optional<std::string> channelname) const
+[[nodiscard]] std::optional<std::vector<uint8_t>> DSA_verifier::get_certificate(
+    const capability &cap) const
+{
+    return pImpl->get_certificate(cap);
+}
+
+[[nodiscard]] std::vector<std::pair<int, std::vector<uint8_t>>>
+DSA_verifier::certificates_for_channel(std::string multicast_group,
+                                       std::optional<std::string> channelname) const
 {
     return pImpl->certificates_for_channel(MOV(multicast_group), MOV(channelname));
 }
 
-bool DSA_verifier::db_verify(const Dutta_Barua_message *msg, std::string multicast_group,
-                             std::string channelname)
+bool DSA_verifier::verify(const Dutta_Barua_message *msg, std::string multicast_group,
+                             std::optional<std::string> channelname) const
 {
-    return pImpl->db_verify(msg, MOV(multicast_group), MOV(channelname));
+    return pImpl->verify(msg, MOV(multicast_group), MOV(channelname));
+}
+bool DSA_verifier::verify(const Dutta_Barua_JOIN *msg, std::string multicast_group,
+                             std::optional<std::string> channelname, int uid) const
+{
+    return pImpl->verify(msg, MOV(multicast_group), MOV(channelname), uid);
+}
+bool DSA_verifier::verify(const Dutta_Barua_JOIN_response *msg, std::string multicast_group,
+                             std::optional<std::string> channelname, int uid) const
+{
+    return pImpl->verify(msg, MOV(multicast_group), MOV(channelname), uid);
 }
 
 DSA_certificate_self::DSA_certificate_self(std::string certificate_filename)

@@ -3,9 +3,14 @@
 struct Dutta_Barua_message
 {
     int32_t u;
-    int8_t round; //either one or two
+
+    //either one or two
+    int8_t round;
+
+    //public value to the chosen secret (X in round1, Y in round 2)
     int32_t public_value_size;
-    byte public_value [public_value_size]; //public value to the chosen secret (X in round1, Y in round 2)
+    byte public_value [public_value_size]; 
+
     int32_t d;
 
     int32_t sig_size;
@@ -19,17 +24,32 @@ struct Dutta_Barua_cert {
 
 struct Dutta_Barua_JOIN
 {
-    int64_t timestamp_r1start_ms;
+    int64_t timestamp_r1start_us;
     Dutta_Barua_cert certificate;
-}
 
+    int32_t sig_size;
+    byte sig [sig_size];
+}
 
 struct Dutta_Barua_JOIN_response 
 {
-    int64_t timestamp_r1start_ms;
+    int64_t timestamp_r1start_us;
+
     int32_t participants;
     Dutta_Barua_cert certificates_participants[participants];
+
     int32_t joining;
     Dutta_Barua_cert certificates_joining[joining];
+
+    //certificate of sender, not included in certificates_joining or certificates_participants
+    //used to sign signature
+    Dutta_Barua_cert self;
+
+    //Role of sender
+    const int32_t ROLE_JOINING=1, ROLE_PARTICIPANT=2;
+    int32_t role;
+
+    int32_t sig_size;
+    byte sig [sig_size];
 }
 

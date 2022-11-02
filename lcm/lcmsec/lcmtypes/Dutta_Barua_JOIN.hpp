@@ -8,15 +8,20 @@
 
 #include "../../lcm_coretypes.h"
 
+#include <vector>
 #include "Dutta_Barua_cert.hpp"
 
 
 class Dutta_Barua_JOIN
 {
     public:
-        int64_t    timestamp_r1start_ms;
+        int64_t    timestamp_r1start_us;
 
         Dutta_Barua_cert certificate;
+
+        int32_t    sig_size;
+
+        std::vector< uint8_t > sig;
 
     public:
         /**
@@ -114,11 +119,19 @@ int Dutta_Barua_JOIN::_encodeNoHash(void *buf, int offset, int maxlen) const
 {
     int pos = 0, tlen;
 
-    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_ms, 1);
+    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_us, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = this->certificate._encodeNoHash(buf, offset + pos, maxlen - pos);
     if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->sig_size, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    if(this->sig_size > 0) {
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
 
     return pos;
 }
@@ -127,11 +140,20 @@ int Dutta_Barua_JOIN::_decodeNoHash(const void *buf, int offset, int maxlen)
 {
     int pos = 0, tlen;
 
-    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_ms, 1);
+    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_us, 1);
     if(tlen < 0) return tlen; else pos += tlen;
 
     tlen = this->certificate._decodeNoHash(buf, offset + pos, maxlen - pos);
     if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->sig_size, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    if(this->sig_size) {
+        this->sig.resize(this->sig_size);
+        tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->sig[0], this->sig_size);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
 
     return pos;
 }
@@ -141,6 +163,8 @@ int Dutta_Barua_JOIN::_getEncodedSizeNoHash() const
     int enc_size = 0;
     enc_size += __int64_t_encoded_array_size(NULL, 1);
     enc_size += this->certificate._getEncodedSizeNoHash();
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
+    enc_size += __byte_encoded_array_size(NULL, this->sig_size);
     return enc_size;
 }
 
@@ -152,7 +176,7 @@ uint64_t Dutta_Barua_JOIN::_computeHash(const __lcm_hash_ptr *p)
             return 0;
     const __lcm_hash_ptr cp = { p, Dutta_Barua_JOIN::getHash };
 
-    uint64_t hash = 0x065881af49e499c1LL +
+    uint64_t hash = 0xf77d951c4d292227LL +
          Dutta_Barua_cert::_computeHash(&cp);
 
     return (hash<<1) + ((hash>>63)&1);

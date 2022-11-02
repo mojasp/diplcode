@@ -17,7 +17,7 @@ include(lcm-cmake/version.cmake)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 if (WIN32)
-  add_definitions(-DWIN32 -D_CRT_SECURE_NO_WARNINGS)
+  add_definitions(-DWIN32 -D_CRT_SECURE_NO_WARNINGS -D__STDC_LIMIT_MACROS -DNOMINMAX)
   include_directories(${lcm_SOURCE_DIR}/WinSpecific/include)
   include_directories(${lcm_SOURCE_DIR}/WinSpecific/getopt)
   include_directories(${lcm_SOURCE_DIR})

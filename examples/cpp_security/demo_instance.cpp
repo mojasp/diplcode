@@ -27,7 +27,7 @@ constexpr std::chrono::duration sender_delay(2s);
 
 class Handler {
   private:
-    bool print_received_msg;
+    bool print_received_msg{true};
 
   public:
     ~Handler() {}
@@ -59,7 +59,7 @@ class Handler {
 
 void send_on_channel(std::string channel, lcm::LCM &lcm);
 
-static Handler handlerObject(true);
+Handler handlerObject(true);
 static std::string instance_name;
 std::vector<std::function<void(void)>> sendfunctions;
 std::vector<std::chrono::high_resolution_clock::time_point> last_send;

@@ -15,9 +15,12 @@
 #include "dsa.h"
 #include "lcm.h"
 #include "lcmsec/eventloop.hpp"
+#include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
+#include "lcmsec/managed_state.hpp"
+#include "state.hpp"
 
 namespace lcmsec_impl {
 
@@ -33,56 +36,7 @@ class Dutta_Barua_GKE {
     virtual ~Dutta_Barua_GKE();
 
   public:
-    enum class STATE : int {
-        keyexchg_not_started = 0,
-        keyexchg_in_progress,
-        keyexchg_successful,
-        ENUMSIZE
-    };
-    inline const char *state_name(STATE s)
-    {
-        static const char *STATE_names[] = {"keyexchg_not_started", "in_progress",
-                                            "keyexchg_successful"};
-        static_assert(sizeof(STATE_names) / sizeof(char *) == static_cast<int>(STATE::ENUMSIZE),
-                      "sizes dont match");
-        return STATE_names[static_cast<int>(s)];
-    }
-    enum class JOIN_ROLE : int { invalid = 0, joining, active, passive, ENUMSIZE };
-    inline const char *join_role_name(JOIN_ROLE r)
-    {
-        static const char *join_role_names[] = {"invalid", "joining", "active", "passive"};
-        static_assert(
-            sizeof(join_role_names) / sizeof(char *) == static_cast<int>(JOIN_ROLE::ENUMSIZE),
-            "sizes dont match");
-        return join_role_names[static_cast<int>(r)];
-    }
-
-    STATE state{STATE::keyexchg_not_started};
-    JOIN_ROLE role{JOIN_ROLE::invalid};
-
-    bool _checkState(STATE s) { return (state == s) ? true : false; }
-
-    template <typename STATE, typename... States>
-    bool _checkState(STATE s, States... ss)
-    {
-        return checkState(s) || checkState(ss...);
-    }
-    template <typename... States>
-    bool checkState(States... ss)
-    {
-        bool result = _checkState(ss...);
-        if (!result) {
-            debug(std::string("invalid state ") + state_name(state));
-        }
-        return result;
-    }
-#define LCMSEC_CHECKSTATE(...)         \
-    do {                               \
-        if (!checkState(__VA_ARGS__)) \
-            return;                    \
-    } while (0);
-
-    virtual void sign_and_dispatch(Dutta_Barua_message &msg) = 0;
+    virtual void publish(Dutta_Barua_message &msg) = 0;
     virtual void gkexchg_finished() = 0;          // hook for child to override
     [[nodiscard]] virtual STATE &getState() = 0;  // hook for child to override
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() = 0;
@@ -92,17 +46,13 @@ class Dutta_Barua_GKE {
     void computeKey();
     void computeKey_passive();
 
-    void prepare_join();
+    void cleanup_intermediates();
     void start_join();
 
     struct user_id {
         int u, d;
     };
     user_id uid;
-
-    // stateful members needed across multiple rounds of the keyexchange //
-    std::vector<int> joining_participants;
-    std::vector<int> participants;
 
     struct {
         Botan::PointGFp left;   // K_i^l
@@ -129,29 +79,26 @@ class Dutta_Barua_GKE {
 
     virtual void debug(std::string msg) = 0;
 
-    // ------ Helper methods --------//
-    // Map virtual user ids (counting - sequentially - all the user ID's that are participating in
-    // the protocol) to the real ones (the ones that are configured in the certificates, and are
-    // part of the messages that are transmitted) NOTE: both use 1-indexing
-    //
-    // THIS METHOD AS IT STANDS MAY ONLY BE CALLED WITH VALID UID's
-    inline int uid_to_protocol_uid(int uid)
-    {
-        auto it = std::lower_bound(joining_participants.cbegin(), joining_participants.cend(),
-                                   uid);  // take advantage of sorted array and do a binary search
-        if (it == joining_participants.cend()) {
-            debug("error: found no protocol uid for uid " + std::to_string(uid));
-            throw std::runtime_error("remote not in particpant list");
-        } else
-            return it - joining_participants.begin() +
-                   1;  // else, return the index that we found (but use 1-indexing)
-    }
+  protected:
+    GkexchgManagedState managed_state;
+    STATE state{STATE::keyexchg_not_started};
+    JOIN_ROLE role{JOIN_ROLE::invalid};
 
-    inline int protocol_uid_to_uid(int proto_uid)
+    bool _checkState(STATE s) { return (state == s) ? true : false; }
+
+    template <typename STATE, typename... States>
+    bool _checkState(STATE s, States... ss)
     {
-        // the protocol user ID's are the indices of participants
-        //  NOTE: it is necessary to convert from and to 1-indexing here
-        return joining_participants.at(proto_uid - 1) + 1;
+        return checkState(s) || checkState(ss...);
+    }
+    template <typename... States>
+    bool checkState(States... ss)
+    {
+        bool result = _checkState(ss...);
+        // if (!result) {
+        //     debug(std::string("invalid state ") + state_name(state));
+        // }
+        return result;
     }
 
     static void db_set_public_value(Dutta_Barua_message &msg, const Botan::PointGFp &point);
@@ -159,7 +106,22 @@ class Dutta_Barua_GKE {
 };
 
 class KeyExchangeManager : public Dutta_Barua_GKE {
+  private:
+
   public:
+    // Recovery management:
+    //
+    // Recall that the primary strategy we use to avoid raceconditions are idempotent tasks that are
+    // registered with our eventloop This poses a challenge from the recovery standpoint (restarting
+    // the keyexchange after something goes wrong) - even after the cleanup, there still might be
+    // "old" tasks in our eventloop
+    //
+    // Solution:
+    // Keep track of the current invocation count of our keyexchange. On Error, increase this count.
+    // when tasks are called, ignore all those with an old invocation count
+    void add_task(eventloop::timepoint_t tp, std::function<void()> f);
+    void add_task(std::function<void()> f);
+
     KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::LCM &lcm);
 
     void JOIN();
@@ -191,41 +153,27 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         125);  // delay start of round1 after the first join() by this time
     std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
     std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
-
-    std::optional<std::chrono::steady_clock::time_point> current_earliest_r1start = {};
+    std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(800);
 
     [[nodiscard]] virtual inline STATE &getState() override { return state; }
 
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() override { return role; }
 
+    inline void gkexchg_failure()
+    {
+        state = STATE::keyexchg_not_started;
+        role = JOIN_ROLE::invalid;
+        uid.d++;
+        cleanup_intermediates();
+        managed_state.gke_failure();
+        add_task([=] {JOIN();});
+    }
   private:
     eventloop &evloop;
     lcm::LCM &lcm;
 
-    inline bool is_neighbour(const Dutta_Barua_message *msg)
-    {
-        return is_left_neighbour(msg) || is_right_neighbour(msg);
-    }
-
-    inline bool is_left_neighbour(const Dutta_Barua_message *msg)
-    {
-        // FIXME when synchronization is done
-        int my_uid = uid_to_protocol_uid(uid.u);
-        int their_uid = uid_to_protocol_uid(msg->u);
-        int neighbour = (my_uid == 1) ? joining_participants.size() : my_uid - 1;
-        return their_uid == neighbour;
-    }
-
-    inline bool is_right_neighbour(const Dutta_Barua_message *msg)
-    {
-        int my_uid = uid_to_protocol_uid(uid.u);
-        int their_uid = uid_to_protocol_uid(msg->u);
-
-        int neighbour = (my_uid == joining_participants.size()) ? 1 : my_uid + 1;
-        return their_uid == neighbour;
-    }
-
-    void sign_and_dispatch(Dutta_Barua_message &msg) override;
+    void publish(Dutta_Barua_message &msg) override;
+    static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
 
     inline void debug(std::string msg) override
     {
@@ -235,26 +183,14 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     inline void gkexchg_finished() override
     {
         state = STATE::keyexchg_successful;
-        role = Dutta_Barua_GKE::JOIN_ROLE::invalid;
+        role = JOIN_ROLE::invalid;
+        uid.d++;
         evloop.channel_finished();
-        current_earliest_r1start = std::nullopt;
         has_new_key = true;
+        cleanup_intermediates();
+        managed_state.gke_success();
     }
 
-    inline bool is_earlier(std::chrono::steady_clock::time_point &lhs,
-                           std::optional<std::chrono::steady_clock::time_point> &rhs)
-    {
-        return !rhs || lhs < *rhs;
-    }
-
-    inline std::chrono::steady_clock::time_point &earliest_time(
-        std::chrono::steady_clock::time_point &tp,
-        std::optional<std::chrono::steady_clock::time_point> &opt_tp)
-    {
-        if (is_earlier(tp, opt_tp))
-            return tp;
-        return opt_tp.value();
-    }
 };
 
 /**

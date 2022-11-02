@@ -15,6 +15,7 @@
 #include <iostream>
 #include <string>
 
+
 #include "gkexchg.h"
 #include "lcmsec/dsa.h"
 #include "lcmsec/eventloop.hpp"
@@ -153,7 +154,10 @@ class _lcm_security_ctx {
                            &lcmsec_impl::KeyExchangeLCMHandler::handle_JOIN_response,
                            keyExchangeManager.get());
             if (cap.channelname) {
-                channel_ctx_map[strndup(cap.channelname->c_str(), LCM_MAX_CHANNEL_NAME_LENGTH)] =
+                    char *copy = (char *) malloc(LCM_MAX_CHANNEL_NAME_LENGTH + 1);
+                    strncpy(copy, cap.channelname->c_str(), LCM_MAX_CHANNEL_NAME_LENGTH);
+                    copy[LCM_MAX_CHANNEL_NAME_LENGTH] = 0;
+                channel_ctx_map[copy] =
                     std::make_unique<lcmsec_impl::channel_crypto_ctx>(MOV(keyExchangeManager),
                                                                       cap.uid, "AES_128/GCM");
             } else {
@@ -330,7 +334,7 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
 
     memcpy(ptext, pt.data(), pt.size());
 
-    CRYPTO_DBG("decrypted channelname %s using %s and IV = %s\n", ptext, cipher->name().c_str(),
+    CRYPTO_DBG("decrypted channelname %s using %s and IV = %s\n", std::string(ptext, pt.size()).c_str(), cipher->name().c_str(),
                Botan::hex_encode(IV).c_str());
     return 0;
 }
