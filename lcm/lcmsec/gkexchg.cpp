@@ -597,22 +597,26 @@ void Dutta_Barua_GKE::start_join()
     bool second = participants[1] == uid.u;
     bool last = participants.back() == uid.u;
 
-    if (getRole() == JOIN_ROLE::joining && !first && !last) {
+    assert(!x_i);
+    auto gen_xi_from_shared_secret = [&] {
         // initialize x_i from shared_secret
         assert(shared_secret);
         auto encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
         x_i = Botan::BigInt(encoded);
-    }
+    };
+
     if (first || second || last) {
+        if (second)
+            gen_xi_from_shared_secret();
         getRole() = JOIN_ROLE::active;
-        debug("join:active r1 started");
         return round1();
     } else if (managed_state.exists_in_joining(uid.u)) {
         getRole() = JOIN_ROLE::joining;
-        debug("joining group");
         return round1();
-    } else
+    } else {
+        gen_xi_from_shared_secret();
         getRole() = JOIN_ROLE::passive;
+    }
 }
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
