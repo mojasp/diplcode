@@ -131,8 +131,7 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
 {
     LCMSEC_CHECKSTATE(STATE::keyexchg_in_progress, STATE::consensus_phase);
     if (state == STATE::consensus_phase) {
-        managed_state.prepare_join();
-        state = STATE::keyexchg_in_progress;
+        start_join();
     }
 
     auto &verifier = DSA_verifier::getInst();
