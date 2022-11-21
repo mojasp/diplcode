@@ -205,11 +205,12 @@ void KeyExchangeManager::JOIN()
     if (state != STATE::consensus_phase) {
         TracyCZoneN(ctx, "group key agreement", 1);
         TRACY_ASSIGN_CTX(gkexchg_context, ctx);
-        state = STATE::consensus_phase;
         if (state == STATE::keyexchg_not_started)
             role = JOIN_ROLE::joining;
         else
             role = JOIN_ROLE::active;
+
+        state = STATE::consensus_phase;
     }
     ZoneScopedN("JOIN");
 
@@ -297,8 +298,11 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     } else
         assert(false);
 
+    debug("setting role in join_response to : " +  std::string(join_role_name(role)));
+
     // NOTE: we do not need to add uid_of_join to our managed state: We will receive our own
     // join_response anyways; so we will simply accept it when we receive it
+
     add_cert_to_response(uid_of_join, consensus_role::joining);
 
     for (int u : managed_state.get_joining()) {
@@ -337,14 +341,16 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase,
                       STATE::keyexchg_successful);
     if (state != STATE::consensus_phase) {
-        state = STATE::consensus_phase;
         TracyCZoneN(ctx, "group key agreement", 1);
         TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+
         state = STATE::consensus_phase;
         if (state == STATE::keyexchg_not_started)
             role = JOIN_ROLE::joining;
         else
             role = JOIN_ROLE::active;
+
+        state = STATE::consensus_phase;
     }
 
     ZoneScopedN("on_JOIN_response");
@@ -424,14 +430,16 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase,
                       STATE::keyexchg_successful);
     if (checkState(STATE::keyexchg_not_started, STATE::keyexchg_successful)) {
-        state = STATE::consensus_phase;
         TracyCZoneN(ctx, "group key agreement", 1);
         TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+
         state = STATE::consensus_phase;
         if (state == STATE::keyexchg_not_started)
             role = JOIN_ROLE::joining;
         else
             role = JOIN_ROLE::active;
+
+        state = STATE::consensus_phase;
     }
 
     ZoneScopedN("on_JOIN");
