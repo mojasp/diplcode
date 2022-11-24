@@ -21,8 +21,8 @@
     } while (0)
 #endif
 
-//#define dbg(...) fprintf (stderr, __VA_ARGS__)
-//#define dbg(...)
+// #define dbg(...) fprintf (stderr, __VA_ARGS__)
+// #define dbg(...)
 
 // to support python 2.5 and earlier
 #ifndef Py_TYPE
@@ -230,9 +230,7 @@ static PyObject *pylcm_publish(PyLCMObject *lcm_obj, PyObject *args)
     }
 
     int status;
-    Py_BEGIN_ALLOW_THREADS;
     status = lcm_publish(lcm_obj->lcm, channel, (uint8_t *) data, datalen);
-    Py_END_ALLOW_THREADS;
 
     if (0 != status) {
         PyErr_SetFromErrno(PyExc_IOError);
@@ -355,9 +353,21 @@ error occurs.\n\
 @return 0 if the function timed out, >1 if a message was handled.\n\
 ");
 
+static PyObject *pylcm_perform_keyexchange(PyLCMObject *lcm_obj)
+{
+    dbg(DBG_PYTHON, "%s %p\n", __FUNCTION__, lcm_obj);
+    return PyInt_FromLong(lcm_perform_keyexchange(lcm_obj->lcm));
+}
+PyDoc_STRVAR(pylcm_perform_keyexchange_doc,
+             "\
+performs the lcm-sec group key agreement in the background\
+");
+
 static PyMethodDef pylcm_methods[] = {
     {"handle", (PyCFunction) pylcm_handle, METH_NOARGS, pylcm_handle_doc},
     {"handle_timeout", (PyCFunction) pylcm_handle_timeout, METH_O, pylcm_handle_timeout_doc},
+    {"perform_keyexchange", (PyCFunction) pylcm_perform_keyexchange, METH_NOARGS,
+     pylcm_perform_keyexchange_doc},
     {"subscribe", (PyCFunction) pylcm_subscribe, METH_VARARGS, pylcm_subscribe_doc},
     {"unsubscribe", (PyCFunction) pylcm_unsubscribe, METH_VARARGS, pylcm_unsubscribe_doc},
     {"publish", (PyCFunction) pylcm_publish, METH_VARARGS, pylcm_publish_doc},
@@ -394,19 +404,19 @@ static void pylcm_dealloc(PyLCMObject *lcm_obj)
 
 static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
 {
-    printf("trace initibj\n ");
     dbg(DBG_PYTHON, "%s %p\n", __FUNCTION__, self);
     PyLCMObject *lcm_obj = (PyLCMObject *) self;
 
     char *url = NULL;
 
-    PyObject* secParamList=NULL;
-    lcm_security_parameters *security_params=NULL; 
-    static char* keywords[] = { "", "sec_params", NULL };
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s$O!", keywords, &url, &PyList_Type ,&secParamList))
+    PyObject *secParamList = NULL;
+    lcm_security_parameters *security_params = NULL;
+    static char *keywords[] = {"", "sec_params", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s$O!", keywords, &url, &PyList_Type,
+                                     &secParamList))
         return -1;
 
-    if(!secParamList)
+    if (!secParamList)
         lcm_obj->lcm = lcm_create(url);
     else {
         int sz = PyList_Size(secParamList);
@@ -416,58 +426,81 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
         printf("init sec, sz = %i\n", sz);
 
         for (int i = 0; i < sz; ++i) {
-            PyObject* dict = PyList_GetItem(secParamList, i);
-            if(!PyDict_Check(dict)) {
-                PyErr_SetString(PyExc_RuntimeError,"when initializing lcm with security, supply a list of dictionaries for the security parameters");
+            PyObject *dict = PyList_GetItem(secParamList, i);
+            if (!PyDict_Check(dict)) {
+                PyErr_SetString(PyExc_RuntimeError,
+                                "when initializing lcm with security, supply a list of "
+                                "dictionaries for the security parameters");
                 goto error;
             }
 
             PyObject *item;
-            PyObject* tuple;
+            PyObject *tuple;
 
             item = PyDict_GetItemString(dict, "algorithm");
-            if(!item) {
+            if (!item) {
                 goto error;
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected algorithm field in security parameters");
+                PyErr_SetString(PyExc_RuntimeError,
+                                "lcmsec: expected algorithm field in security parameters");
             }
             tuple = Py_BuildValue("(O)", item);
-            if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].algorithm)))
+            if (!tuple)
+                goto error;
+            if (!PyArg_ParseTuple(tuple, "s", &(security_params[i].algorithm)))
+                goto error;
+
+            item = PyDict_GetItemString(dict, "keyexchange_in_background");
+            if (!item) {
+                goto error;
+                PyErr_SetString(PyExc_RuntimeError,
+                                "lcmsec: expected keyexchange_in_background field in security parameters");
+            }
+            tuple = Py_BuildValue("(O)", item);
+            if (!tuple)
+                goto error;
+            if (!PyArg_ParseTuple(tuple, "p", &(security_params[i].keyexchange_in_background)))
                 goto error;
 
             item = PyDict_GetItemString(dict, "certificate");
-            if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'certificate' field in security parameters");
+            if (!item) {
+                PyErr_SetString(PyExc_RuntimeError,
+                                "lcmsec: expected 'certificate' field in security parameters");
                 goto error;
             }
             tuple = Py_BuildValue("(O)", item);
-            if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "z", &(security_params[i].certificate)))
+            if (!tuple)
+                goto error;
+            if (!PyArg_ParseTuple(tuple, "z", &(security_params[i].certificate)))
                 goto error;
 
             item = PyDict_GetItemString(dict, "key");
-            if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'keyfile' field in security parameters");
+            if (!item) {
+                PyErr_SetString(PyExc_RuntimeError,
+                                "lcmsec: expected 'keyfile' field in security parameters");
                 goto error;
             }
             tuple = Py_BuildValue("(O)", item);
-            if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].keyfile)))
+            if (!tuple)
+                goto error;
+            if (!PyArg_ParseTuple(tuple, "s", &(security_params[i].keyfile)))
                 goto error;
 
             item = PyDict_GetItemString(dict, "root_ca");
-            if(!item) {
-                PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'root_ca' field in security parameters");
+            if (!item) {
+                PyErr_SetString(PyExc_RuntimeError,
+                                "lcmsec: expected 'root_ca' field in security parameters");
                 goto error;
             }
             tuple = Py_BuildValue("(O)", item);
-            if(!tuple) goto error;
-            if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].root_ca)))
+            if (!tuple)
                 goto error;
-
+            if (!PyArg_ParseTuple(tuple, "s", &(security_params[i].root_ca)))
+                goto error;
         }
 
+        Py_BEGIN_ALLOW_THREADS;
         lcm_obj->lcm = lcm_create_with_security(url, security_params, sz);
+        Py_END_ALLOW_THREADS;
     }
 
     if (!lcm_obj->lcm) {
@@ -478,7 +511,8 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
 
     return 0;
 error:
-    if(security_params) free(security_params);
+    if (security_params)
+        free(security_params);
     return -1;
 }
 

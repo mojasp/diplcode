@@ -201,6 +201,16 @@ typedef struct {
      */
     char *algorithm;
 
+    /*
+     * @brief
+     * Whether to run the keyagreement in the background
+     *
+     * If true, a thread will be started in the background to run the group key agreement protocol
+     * If false, keyagreement will be performed only on startup. If dynamic properties of the key
+     * agreement are desired, call lcm_perform_keyexchange to explicitly perform the keyexchange
+     */
+    int keyexchange_in_background;
+
     /**
      * @brief string with the relative path to the public key certificate
      */

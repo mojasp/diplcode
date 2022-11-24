@@ -166,6 +166,11 @@ class _lcm_security_ctx {
             }
         }
         ev_loop.run(1 + channel_ctx_map.size());
+
+        if(params->keyexchange_in_background){
+            std::thread t([this]{perform_keyexchange();});
+            t.detach(); //FIXME: graceful shutdown
+        }
     }
 
     int perform_keyexchange()
