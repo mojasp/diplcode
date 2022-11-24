@@ -455,7 +455,7 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
             if(!PyArg_ParseTuple(tuple, "s", &(security_params[i].keyfile)))
                 goto error;
 
-            item = PyDict_GetItemString(dict, "nonce");
+            item = PyDict_GetItemString(dict, "root_ca");
             if(!item) {
                 PyErr_SetString(PyExc_RuntimeError,"lcmsec: expected 'root_ca' field in security parameters");
                 goto error;
