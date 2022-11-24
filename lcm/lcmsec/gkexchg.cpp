@@ -332,8 +332,8 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     std::string ch = std::string("join_resp") + groupexchg_channelname;
     lcm.publish(ch, &response);
 
-    debug("dispatching join_response with {" + std::to_string(response.participants) + ", " +
-          std::to_string(response.joining) + "}");
+    debug("dispatching join_response with {" + std::to_string(response.participants + (response.role == response.ROLE_PARTICIPANT)) + ", " +
+          std::to_string(response.joining + (response.role == response.ROLE_JOINING)) + "}");
 }
 
 void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_response)
@@ -356,12 +356,12 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     ZoneScopedN("on_JOIN_response");
 
     auto dbg_reject = [=, this](std::string msg) {
-        debug("rejecting join_response with {" + std::to_string(join_response->participants) +
-              ", " + std::to_string(join_response->joining) + "} :" + msg);
+        debug("rejecting join_response with {" + std::to_string(join_response->participants + (join_response->role == join_response->ROLE_PARTICIPANT)) +
+              ", " + std::to_string(join_response->joining + (join_response->role == join_response->ROLE_JOINING)) + "} :" + msg);
     };
     auto dbg_accept = [=, this] {
-        debug("accepting join_response with {" + std::to_string(join_response->participants) +
-              ", " + std::to_string(join_response->joining) + "}");
+        debug("accepting join_response with {" + std::to_string(join_response->participants + (join_response->role == join_response->ROLE_PARTICIPANT)) +
+              ", " + std::to_string(join_response->joining + (join_response->role == join_response->ROLE_JOINING)) + "}");
     };
 
     std::vector<int> candidate_participants;
