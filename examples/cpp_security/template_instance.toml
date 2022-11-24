@@ -1,0 +1,29 @@
+# This is a TOML document
+
+instance_name = "Alice"
+
+[group]
+
+[group.alpha]
+
+# LCM configuration url; see https://lcm-proj.github.io/group__LcmC__lcm__t.html#gaf29963ef43edadf45296d5ad82c18d4b
+#example: "udpm://239.255.76.67:7667?ttl = 1" .
+# can be empty for default
+
+algorithm     = "AES-128/GCM"
+multicast_url = "udpm://239.255.76.67:7667"
+privkey       = "test_chain/$.key"
+cert          = "test_chain/$.crt"
+root_ca       = "test_chain/root_ca.crt"
+
+[group.alpha.channel1]
+
+channelname   = "channel1"
+send          = true
+receive       = true
+
+[group.alpha.channel2]
+
+channelname   = "channel2"
+send          = false
+receive       = true
