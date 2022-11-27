@@ -73,8 +73,8 @@ bool GkexchgManagedState::process_timestamp(time_point tp)
 
     if (process_state.candidate_participants->size() == participants.size() &&
         process_state.candidate_joining->size() == joining_participants.size() &&
-        !is_earlier(tp, current_earliest_r1start)) {
-        // reset process_state
+        !earlier_or_equal(tp, current_earliest_r1start)) {
+        //reject and reset process_state
         process_state = _process_state{};
         return false;
     }

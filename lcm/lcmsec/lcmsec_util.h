@@ -35,6 +35,11 @@ inline bool is_earlier(std::chrono::steady_clock::time_point lhs,
 {
     return !rhs || lhs < *rhs;
 }
+inline bool earlier_or_equal(std::chrono::steady_clock::time_point lhs,
+                       std::optional<std::chrono::steady_clock::time_point> rhs)
+{
+    return !rhs || lhs <= *rhs;
+}
 
 inline std::chrono::steady_clock::time_point earliest_time(
     std::chrono::steady_clock::time_point &tp,

@@ -235,7 +235,7 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
 {
     // Dispatching a join response is only valid if we are in the consensus phase
     LCMSEC_CHECKSTATE(STATE::consensus_phase);
-    ZoneScopedN("JOIN_response");
+    TracyCZoneN(tracy_ctx, "JOIN_response", 1);
 
     std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
               << managed_state.get_joining() << " : " << managed_state.get_participants()
@@ -298,10 +298,7 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     } else
         assert(false);
 
-    debug("setting role in join_response to : " +  std::string(join_role_name(role)));
-
-    // NOTE: we do not need to add uid_of_join to our managed state: We will receive our own
-    // join_response anyways; so we will simply accept it when we receive it
+    debug("setting role in join_response to : " + std::string(join_role_name(role)));
 
     add_cert_to_response(uid_of_join, consensus_role::joining);
 
@@ -330,10 +327,22 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
 
     sign_msg(response);
     std::string ch = std::string("join_resp") + groupexchg_channelname;
-    lcm.publish(ch, &response);
 
-    debug("dispatching join_response with {" + std::to_string(response.participants + (response.role == response.ROLE_PARTICIPANT)) + ", " +
-          std::to_string(response.joining + (response.role == response.ROLE_JOINING)) + "}");
+    debug("dispatching join_response with {" +
+          std::to_string(response.participants + (response.role == response.ROLE_PARTICIPANT)) +
+          ", " + std::to_string(response.joining + (response.role == response.ROLE_JOINING)) + "}");
+
+    // NOTE: It might seem that we do not need to add uid_of_join to our managed state: We will
+    // receive our own join_response anyways; so we will simply accept it when we receive it
+    //
+    // However, this woudl cause a race condition when multiple joins queued up for a join_response:
+    // we might not receive our own join response before dispatching the next one, thus "losing"
+    // information about the first join(s).
+    // Therefore, we "short circuit" our join_response:
+    TracyCZoneEnd(tracy_ctx);
+    on_JOIN_response(&response);
+
+    lcm.publish(ch, &response);
 }
 
 void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_response)
@@ -356,12 +365,22 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     ZoneScopedN("on_JOIN_response");
 
     auto dbg_reject = [=, this](std::string msg) {
-        debug("rejecting join_response with {" + std::to_string(join_response->participants + (join_response->role == join_response->ROLE_PARTICIPANT)) +
-              ", " + std::to_string(join_response->joining + (join_response->role == join_response->ROLE_JOINING)) + "} :" + msg);
+        debug("rejecting join_response with {" +
+              std::to_string(join_response->participants +
+                             (join_response->role == join_response->ROLE_PARTICIPANT)) +
+              ", " +
+              std::to_string(join_response->joining +
+                             (join_response->role == join_response->ROLE_JOINING)) +
+              "} :" + msg);
     };
     auto dbg_accept = [=, this] {
-        debug("accepting join_response with {" + std::to_string(join_response->participants + (join_response->role == join_response->ROLE_PARTICIPANT)) +
-              ", " + std::to_string(join_response->joining + (join_response->role == join_response->ROLE_JOINING)) + "}");
+        debug("accepting join_response with {" +
+              std::to_string(join_response->participants +
+                             (join_response->role == join_response->ROLE_PARTICIPANT)) +
+              ", " +
+              std::to_string(join_response->joining +
+                             (join_response->role == join_response->ROLE_JOINING)) +
+              "}");
     };
 
     std::vector<int> candidate_participants;
