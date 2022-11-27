@@ -168,6 +168,7 @@ int main(int argc, char **argv)
         group_params.certificate = cert.data();
         group_params.keyfile = privkey.data();
         group_params.root_ca = root_ca.data();
+        group_params.keyexchange_in_background = false;
         sec_params.push_back(group_params);
 
         lcm::LCM lcm(multicast_url.value<std::string>().value(), sec_params.data(),
