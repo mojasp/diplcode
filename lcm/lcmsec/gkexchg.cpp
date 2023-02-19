@@ -231,15 +231,36 @@ void KeyExchangeManager::JOIN()
     lcm.publish(ch, &join);
 }
 
-void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1start_us)
+void KeyExchangeManager::JOIN_response()
 {
     // Dispatching a join response is only valid if we are in the consensus phase
     LCMSEC_CHECKSTATE(STATE::consensus_phase);
     TracyCZoneN(tracy_ctx, "JOIN_response", 1);
 
-    std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
-              << managed_state.get_joining() << " : " << managed_state.get_participants()
-              << std::endl;
+    // Since a JOIN_reponse either answers all join's or notices that they have already been
+    // answered, the observed_joins are cleared every time.
+    auto atexit = finally([&] { observed_joins.clear(); });
+
+    // First build a vector of all the joins that have not yet been answered, i.e. the ones that we
+    // have observed, but are not part of our managed_state. we can improve the managed state by
+    // adding them to it, since the managed_state is the best consensus candidate observed so far.
+    std::vector<const joindesc *> unanswered_joins;
+    for (int i = 0; i < observed_joins.size(); i++) {
+        int uid_of_join = observed_joins[i].uid;
+        std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
+                  << managed_state.get_joining() << " : " << managed_state.get_participants()
+                  << std::endl;
+
+        if (!managed_state.exists_in_joining(uid_of_join)) {
+            unanswered_joins.push_back(&observed_joins.front() + i);
+        }
+    }
+
+    if (unanswered_joins.empty()) {
+        TracyCZoneEnd(tracy_ctx);
+        return;  // All joins answered: we cannot improve the managed_state
+    }
+
     // Note that we do not need to test (in this method) whether or not we are a good candidate to
     // dispatch a join_response
 
@@ -247,10 +268,6 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     // in which case we will have rejected them, thus, joining_participants will *not* contain
     // uid_of join - or we are not, in which case we will have accepted their  response and thus
     // uid_of_join *will* be part of joining_participants.
-    if (managed_state.exists_in_joining(uid_of_join)) {
-        debug("join answered already, skipping join_response");
-        return;
-    }
 
     auto &verif = DSA_verifier::getInst();
     Dutta_Barua_JOIN_response response{0};
@@ -300,7 +317,9 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
 
     debug("setting role in join_response to : " + std::string(join_role_name(role)));
 
-    add_cert_to_response(uid_of_join, consensus_role::joining);
+    for (const joindesc *e : unanswered_joins) {
+        add_cert_to_response(e->uid, consensus_role::joining);
+    }
 
     for (int u : managed_state.get_joining()) {
         add_cert_to_response(u, consensus_role::joining);
@@ -312,9 +331,12 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     response.joining = response.certificates_joining.size();
     response.participants = response.certificates_participants.size();
 
+    int64_t earliest_requested_r1start_us =
+        std::accumulate(unanswered_joins.begin(), unanswered_joins.end(), INT64_MAX,
+                        [](int64_t a, const joindesc *b) { return std::min(b->req_r1start, a); });
     // Same note as above: it suffices to set this field in the response
     std::chrono::steady_clock::time_point req_r1start{
-        std::chrono::microseconds(requested_r1start_us)};
+        std::chrono::microseconds(earliest_requested_r1start_us)};
     response.timestamp_r1start_us = std::chrono::time_point_cast<std::chrono::microseconds>(
                                         earliest_time(req_r1start, managed_state.r1start()))
                                         .time_since_epoch()
@@ -335,7 +357,7 @@ void KeyExchangeManager::JOIN_response(int uid_of_join, int64_t requested_r1star
     // NOTE: It might seem that we do not need to add uid_of_join to our managed state: We will
     // receive our own join_response anyways; so we will simply accept it when we receive it
     //
-    // However, this woudl cause a race condition when multiple joins queued up for a join_response:
+    // However, this would cause a race condition when multiple joins queued up for a join_response:
     // we might not receive our own join response before dispatching the next one, thus "losing"
     // information about the first join(s).
     // Therefore, we "short circuit" our join_response:
@@ -483,10 +505,8 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
           std::to_string(
               (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
           "milliseconds");
-    add_task(response_timepoint,
-             [ruid = remote_uid.value(), req_r1start = join_msg->timestamp_r1start_us, this] {
-                 JOIN_response(ruid, req_r1start);
-             });
+    observed_joins.push_back(joindesc{remote_uid.value(), join_msg->timestamp_r1start_us});
+    add_task(response_timepoint, [this] { JOIN_response(); });
 }
 
 void Dutta_Barua_GKE::round1()

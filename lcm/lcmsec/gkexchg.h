@@ -104,11 +104,13 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
   private:
     TracyCZoneCtx gkexchg_context;
 
+
+
   public:
     // Recovery management:
     //
     // Recall that the primary strategy we use to avoid raceconditions are idempotent tasks that are
-    // registered with our eventloop This poses a challenge from the recovery standpoint (restarting
+    // registered with our eventloop. This poses a challenge from the recovery standpoint (restarting
     // the keyexchange after something goes wrong) - even after the cleanup, there still might be
     // "old" tasks in our eventloop
     //
@@ -121,7 +123,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::LCM &lcm);
 
     void JOIN();
-    void JOIN_response(int uid_of_join, int64_t requested_r1start);
+    void JOIN_response();
     void onJOIN(const Dutta_Barua_JOIN *join_msg);
     void on_JOIN_response(const Dutta_Barua_JOIN_response *join_response);
 
@@ -161,6 +163,13 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
   private:
     eventloop &evloop;
     lcm::LCM &lcm;
+
+    struct joindesc {
+        int uid;
+        int64_t req_r1start;
+    };
+
+    std::vector<joindesc> observed_joins;
 
     void publish(Dutta_Barua_message &msg) override;
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
