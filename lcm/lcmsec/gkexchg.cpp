@@ -58,11 +58,11 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
     // start join later, to avoid race condition in which we JOIN, accept the JOIN, and finish the
     // gkexchg before being subscribed with our LCM instance and able to receive on the management
     // channel
-    add_task(std::chrono::steady_clock::now(), [this] { JOIN(); });
+    add_task(std::chrono::high_resolution_clock::now(), [this] { JOIN(); });
 
     // prepare a timeout task - will not be called in case of success of the group key exchange,
     // since in that case the invocation count will have increased already
-    add_task(std::chrono::steady_clock::now() + gkexchg_timeout, [this] {
+    add_task(std::chrono::high_resolution_clock::now() + gkexchg_timeout, [this] {
         std::cerr << channelname.value_or("nullopt")
                   << ": groupkeyexchange timed out on channel, restarting..." << std::endl;
         gkexchg_failure();
@@ -124,7 +124,7 @@ void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void(
 
 void KeyExchangeManager::add_task(std::function<void()> f)
 {
-    add_task(std::chrono::steady_clock::now(), MOV(f));
+    add_task(std::chrono::high_resolution_clock::now(), MOV(f));
 };
 
 void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
@@ -216,7 +216,7 @@ void KeyExchangeManager::JOIN()
 
     Dutta_Barua_JOIN join;
 
-    auto requested_r1start = std::chrono::steady_clock::now() + JOIN_waitperiod;
+    auto requested_r1start = std::chrono::high_resolution_clock::now() + JOIN_waitperiod;
     auto requested_r1start_us =
         std::chrono::time_point_cast<std::chrono::microseconds>(requested_r1start);
     join.timestamp_r1start_us = requested_r1start_us.time_since_epoch().count();
@@ -335,7 +335,7 @@ void KeyExchangeManager::JOIN_response()
         std::accumulate(unanswered_joins.begin(), unanswered_joins.end(), INT64_MAX,
                         [](int64_t a, const joindesc *b) { return std::min(b->req_r1start, a); });
     // Same note as above: it suffices to set this field in the response
-    std::chrono::steady_clock::time_point req_r1start{
+    std::chrono::high_resolution_clock::time_point req_r1start{
         std::chrono::microseconds(earliest_requested_r1start_us)};
     response.timestamp_r1start_us = std::chrono::time_point_cast<std::chrono::microseconds>(
                                         earliest_time(req_r1start, managed_state.r1start()))
@@ -354,15 +354,12 @@ void KeyExchangeManager::JOIN_response()
           std::to_string(response.participants + (response.role == response.ROLE_PARTICIPANT)) +
           ", " + std::to_string(response.joining + (response.role == response.ROLE_JOINING)) + "}");
 
-    // NOTE: It might seem that we do not need to add uid_of_join to our managed state: We will
-    // receive our own join_response anyways; so we will simply accept it when we receive it
-    //
-    // However, this would cause a race condition when multiple joins queued up for a join_response:
-    // we might not receive our own join response before dispatching the next one, thus "losing"
-    // information about the first join(s).
-    // Therefore, we "short circuit" our join_response:
+    //Update managed state according to the join_response we are transmitting.
+    for (const joindesc* e : unanswered_joins) {
+        managed_state.add_joining(e->uid);
+    }
+
     TracyCZoneEnd(tracy_ctx);
-    on_JOIN_response(&response);
 
     lcm.publish(ch, &response);
 }
@@ -453,7 +450,7 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     }
 
     // Third: achieve consensus on start of round
-    std::chrono::steady_clock::time_point requested_starting_time{
+    std::chrono::high_resolution_clock::time_point requested_starting_time{
         std::chrono::microseconds(join_response->timestamp_r1start_us)};
     if (!managed_state.process_timestamp(requested_starting_time)) {
         dbg_reject(
@@ -500,10 +497,10 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
     srand(std::chrono::system_clock::now().time_since_epoch().count());
     int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
     auto response_timepoint =
-        steady_clock::now() + microseconds(avgdelay_count_us) + microseconds(us_offset);
+        high_resolution_clock::now() + microseconds(avgdelay_count_us) + microseconds(us_offset);
     debug("sending response to (" + std::to_string(remote_uid.value()) + ") in " +
           std::to_string(
-              (duration_cast<milliseconds>(response_timepoint - steady_clock::now())).count()) +
+              (duration_cast<milliseconds>(response_timepoint - high_resolution_clock::now())).count()) +
           "milliseconds");
     observed_joins.push_back(joindesc{remote_uid.value(), join_msg->timestamp_r1start_us});
     add_task(response_timepoint, [this] { JOIN_response(); });
@@ -750,7 +747,7 @@ void KeyExchangeManager::gkexchg_failure()
     uid.d++;
     cleanup_intermediates();
     managed_state.gke_failure();
-    add_task([this] { JOIN(); });
+    add_task(std::chrono::high_resolution_clock::now(), [this] { JOIN(); });
 }
 void KeyExchangeManager::gkexchg_finished()
 {

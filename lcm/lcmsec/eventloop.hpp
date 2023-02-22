@@ -88,7 +88,7 @@ namespace lcmsec_impl {
 class eventloop {
 public:
     using task_t = std::function<void()>;
-    using timepoint_t = std::chrono::time_point<std::chrono::steady_clock>;
+    using timepoint_t = std::chrono::time_point<std::chrono::high_resolution_clock>;
     using listelem_t = std::pair<timepoint_t, task_t>;
   private:
 
@@ -106,7 +106,7 @@ public:
     {
         // ZoneScoped;
         // Handle next task if it is available
-        auto now = std::chrono::steady_clock::now();
+        auto now = std::chrono::high_resolution_clock::now();
         while (!tasks.empty() && now > tasks.front().first) {
             // ZoneNamedN(tracy_task, "eventloop task", true);
             auto t = tasks.front();
@@ -122,7 +122,7 @@ public:
         FD_ZERO(&fds);
         FD_SET(lcm_fd, &fds);
 
-        auto now = std::chrono::steady_clock::now();
+        auto now = std::chrono::high_resolution_clock::now();
         auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
 
         struct timeval timeout = { 
@@ -148,7 +148,7 @@ public:
 
     inline void push_task(eventloop::task_t task)
     {
-        auto now = std::chrono::steady_clock::now();
+        auto now = std::chrono::high_resolution_clock::now();
         tasks.emplace_front(std::make_pair(MOV(now), MOV(task)));
     }
 

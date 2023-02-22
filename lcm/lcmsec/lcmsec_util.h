@@ -30,20 +30,20 @@ inline std::ostream &operator<<(std::ostream &stream, const std::vector<int> &co
     return stream;
 }
 
-inline bool is_earlier(std::chrono::steady_clock::time_point lhs,
-                       std::optional<std::chrono::steady_clock::time_point> rhs)
+inline bool is_earlier(std::chrono::high_resolution_clock::time_point lhs,
+                       std::optional<std::chrono::high_resolution_clock::time_point> rhs)
 {
     return !rhs || lhs < *rhs;
 }
-inline bool earlier_or_equal(std::chrono::steady_clock::time_point lhs,
-                       std::optional<std::chrono::steady_clock::time_point> rhs)
+inline bool earlier_or_equal(std::chrono::high_resolution_clock::time_point lhs,
+                       std::optional<std::chrono::high_resolution_clock::time_point> rhs)
 {
     return !rhs || lhs <= *rhs;
 }
 
-inline std::chrono::steady_clock::time_point earliest_time(
-    std::chrono::steady_clock::time_point &tp,
-    std::optional<std::chrono::steady_clock::time_point> opt_tp)
+inline std::chrono::high_resolution_clock::time_point earliest_time(
+    std::chrono::high_resolution_clock::time_point &tp,
+    std::optional<std::chrono::high_resolution_clock::time_point> opt_tp)
 {
     if (is_earlier(tp, opt_tp))
         return tp;

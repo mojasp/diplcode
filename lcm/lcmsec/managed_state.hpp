@@ -20,7 +20,7 @@ namespace lcmsec_impl {
 
 class GkexchgManagedState {
   public:
-    using time_point = std::chrono::steady_clock::time_point;
+    using time_point = std::chrono::high_resolution_clock::time_point;
 
   private:
     bool locked{false};  // prevent modification of state during execution of GKE
@@ -58,6 +58,11 @@ class GkexchgManagedState {
     } process_state;
 
   public:
+    
+    //Add uid to joinin vector.
+    //Intended to be called before transmitting a joinresponse
+    void add_joining(int uid);
+
     /**
      * process_* :
      *  process a candidate for consensus (in terms of RAFT: decide whether to accept remote as
@@ -97,7 +102,7 @@ class GkexchgManagedState {
     [[nodiscard]] const std::vector<int> &get_joining() const;
     [[nodiscard]] inline int num_joining() const { return joining_participants.size(); }
 
-    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> r1start() const;
+    [[nodiscard]] std::optional<std::chrono::high_resolution_clock::time_point> r1start() const;
 
     [[nodiscard]] bool find_uid_in_participants(int uid) const;
     [[nodiscard]] bool exists_in_joining(int uid) const;

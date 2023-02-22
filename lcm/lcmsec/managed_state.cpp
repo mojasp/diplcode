@@ -47,6 +47,10 @@ bool GkexchgManagedState::process_participant(const std::vector<int> *candidate_
     return true;
 }
 
+void GkexchgManagedState::add_joining(int uid) {
+    joining_participants.push_back(uid);
+}
+
 bool GkexchgManagedState::process_joining(const std::vector<int> *candidate_joining)
 {
     assert(!locked);
@@ -90,7 +94,7 @@ bool GkexchgManagedState::process_timestamp(time_point tp)
     return true;
 }
 
-[[nodiscard]] std::optional<std::chrono::steady_clock::time_point> GkexchgManagedState::r1start()
+[[nodiscard]] std::optional<std::chrono::high_resolution_clock::time_point> GkexchgManagedState::r1start()
     const
 {
     return current_earliest_r1start;
