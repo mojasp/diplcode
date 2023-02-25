@@ -23,8 +23,6 @@
 typedef int SOCKET;
 #endif
 
-
-
 namespace lcmsec_impl {
 /*
  * Brief explanation of the eventloop logic
@@ -86,12 +84,12 @@ namespace lcmsec_impl {
  * Right now implemented with a queue. Can be more efficient by using lcm_get_fileno and poll/select
  */
 class eventloop {
-public:
+  public:
     using task_t = std::function<void()>;
     using timepoint_t = std::chrono::time_point<std::chrono::high_resolution_clock>;
     using listelem_t = std::pair<timepoint_t, task_t>;
-  private:
 
+  private:
     // linked list as storage, sorted by timepoints
     // Strictly speaking it is only sorted in the sense that timepoints now are considered equal to
     // those n the past
@@ -117,31 +115,46 @@ public:
 
     inline void handle_lcm()
     {
-        int lcm_fd = lcm.getFileno();
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(lcm_fd, &fds);
+        // handle all available messages first => it is better to listen than to send!.
+        // listening might mean that we no longer have to send. dont be greedy!
+        while (1) {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
 
-        auto now = std::chrono::high_resolution_clock::now();
-        auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
+            struct timeval timeout = {
+                // FIXME: is this a bug in cases of timeouts over one seconds? => i think we need to
+                // truncate microseconds...
+                std::max<int64_t>(
+                    std::chrono::duration_cast<std::chrono::seconds>(next_task_delta).count(), 0),
+                std::max<int64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(next_task_delta).count(),
+            0)};  // ensure timeouts are not below 0
 
-        struct timeval timeout = { 
-            //FIXME: is this a bug in cases of timeouts over one seconds? => i think we need to truncate microseconds...
-            std::max<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(next_task_delta).count(), 0),
-            std::max<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(next_task_delta).count(), 0)
-        };//ensure timeouts are not below 0
-        int status = select(lcm_fd + 1, &fds, 0, 0, &timeout);
-        if (status > 0 && FD_ISSET(lcm_fd, &fds)) {
-            // handle incoming messages for the keyexchg protocol
-            lcm.handle();  // guaranteed to be nonblocking
+            int lcm_fd = lcm.getFileno();
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(lcm_fd, &fds);
+
+            int status = select(lcm_fd + 1, &fds, 0, 0, &timeout);
+
+            if (status < 0) {
+                throw std::runtime_error("lcmsec: select error in eventloop: " +
+                                         std::string(strerror(errno)));
+            }
+            if (status > 0 && FD_ISSET(lcm_fd, &fds)) {
+                // handle incoming messages for the keyexchg protocol
+                lcm.handle();  // guaranteed to be nonblocking
+            }
+            if (status == 0) {
+                // no lcmdata
+                break;
+            }
         }
-        if (status < 0) {
-            throw std::runtime_error("lcmsec: select error in eventloop: " + std::string(strerror(errno)));
-        }
+
     }
 
   public:
-    inline eventloop(lcm::LCM &lcm, int lcm_timeout_ms = 50)
+    inline eventloop(lcm::LCM &lcm, int lcm_timeout_ms = 1000)
         : lcm(lcm), default_poll_interval(lcm_timeout_ms)
     {
     }
@@ -162,7 +175,6 @@ public:
                          [](const listelem_t &e, const timepoint_t &tp) { return e.first < tp; }),
                      std::make_pair(MOV(timepoint), MOV(task)));
     }
-
     /*
      * run until channels are configured - useful for initializing the keyexchange
      */
@@ -172,8 +184,8 @@ public:
         handle_tasks();
         do {
             handle_lcm();
-            handle_tasks();  // Switch order in this case to avoid extra wait on lcm when were
-                             // already done
+            handle_tasks();  // Switch order in this case to avoid extra wait on lcm when
+                             // were already done
         } while (unfinished_channels > 0);
     }
 
