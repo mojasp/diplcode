@@ -19,14 +19,14 @@ extern "C" {
 
 #define LCMCRYPTO_SESSION_NONCE_SIZE 6
 
-#define LCMCRYPTO_DEBUG 1
+#define LCMCRYPTO_DEBUG 0
 
 #define CRYPTO_DBG(fmt, ...) \
     do { if (LCMCRYPTO_DEBUG) fprintf(stderr, "lcmcrypto: " fmt, __VA_ARGS__); } while (0) //formatted debug message while preserving possible compilation errors
 
 typedef struct _lcm_security_ctx lcm_security_ctx; //opaque type used for interoperability with c code
 
-lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters* params, size_t paramlen);
+lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters* params, size_t paramlen, const char* network);
 
 void lcm_destroy_security_ctx (lcm_security_ctx* ctx);
 

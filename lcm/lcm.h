@@ -211,6 +211,13 @@ typedef struct {
      */
     int keyexchange_in_background;
 
+    /*
+     * domainurl on which to perform the keyagreement.
+     * must be a valid lcm udpm provider url, e.g. 239.255.76.67:7667; optional ttl's may exists.
+     * Can be NULL: in this case, const char *provider will be used for the keyagreement
+     */
+    const char* keyexchange_url;
+
     /**
      * @brief string with the relative path to the public key certificate
      */

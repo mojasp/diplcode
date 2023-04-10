@@ -91,6 +91,15 @@ static lcm_t* lcm_create_impl(const char* url,
         url = getenv("LCM_DEFAULT_URL");
     if (!url || !strlen(url))
         url = LCM_DEFAULT_URL;
+    for(int i = 0; i < param_len; i++) {
+        if(!(sec_params+i)){
+            fprintf(stderr, "Error: LCMsec security parameter #%d is NULL\n", i);
+            return 0;
+        }
+        if(sec_params[i].keyexchange_url == NULL){
+            sec_params[i].keyexchange_url = url;
+        }
+    }
 
     if (0 != lcm_parse_url(url, &provider_str, &network, args)) {
         fprintf(stderr, "%s:%d -- invalid URL [%s]\n", __FILE__, __LINE__, url);
