@@ -17,6 +17,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <numeric>
+#include <iterator>
+#include <sstream>
 #include <tracy/Tracy.hpp>
 
 #include "lcmsec/dsa.h"
@@ -247,10 +249,6 @@ void KeyExchangeManager::JOIN_response()
     std::vector<const joindesc *> unanswered_joins;
     for (int i = 0; i < observed_joins.size(); i++) {
         int uid_of_join = observed_joins[i].uid;
-        std::cerr << channelname.value_or("nullopt") << ": joinof( " << uid_of_join << ")\t"
-                  << managed_state.get_joining() << " : " << managed_state.get_participants()
-                  << std::endl;
-
         if (!managed_state.exists_in_joining(uid_of_join)) {
             unanswered_joins.push_back(&observed_joins.front() + i);
         }
@@ -354,8 +352,8 @@ void KeyExchangeManager::JOIN_response()
           std::to_string(response.participants + (response.role == response.ROLE_PARTICIPANT)) +
           ", " + std::to_string(response.joining + (response.role == response.ROLE_JOINING)) + "}");
 
-    //Update managed state according to the join_response we are transmitting.
-    for (const joindesc* e : unanswered_joins) {
+    // Update managed state according to the join_response we are transmitting.
+    for (const joindesc *e : unanswered_joins) {
         managed_state.add_joining(e->uid);
     }
 
@@ -500,20 +498,29 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
         high_resolution_clock::now() + microseconds(avgdelay_count_us) + microseconds(us_offset);
     debug("sending response to (" + std::to_string(remote_uid.value()) + ") in " +
           std::to_string(
-              (duration_cast<milliseconds>(response_timepoint - high_resolution_clock::now())).count()) +
+              (duration_cast<milliseconds>(response_timepoint - high_resolution_clock::now()))
+                  .count()) +
           "milliseconds");
     observed_joins.push_back(joindesc{remote_uid.value(), join_msg->timestamp_r1start_us});
     add_task(response_timepoint, [this] { JOIN_response(); });
+}
+
+static std::ostringstream uid_vector_string(const std::vector<int> &v)
+{
+    std::ostringstream ss;
+    if (!v.empty()) {
+        std::copy(v.begin(), v.end() - 1, std::ostream_iterator<int>(ss, ","));
+        ss << v.back();
+    }
+    return ss;
 }
 
 void Dutta_Barua_GKE::round1()
 {
     ZoneScopedN("round1");
     auto &verifier = DSA_verifier::getInst();
-    for (const auto &e : managed_state.uid_view().get()) {
-        std::cout << e << "\t";
-    }
-    std::cout << std::endl;
+
+    debug(uid_vector_string(managed_state.uid_view().get()).str());
 
     debug(("------ starting Dutta_Barua_GKE with " +
            std::to_string(managed_state.active_participants()) + "participants ------- ")

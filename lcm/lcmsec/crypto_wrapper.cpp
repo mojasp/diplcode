@@ -167,7 +167,6 @@ class _lcm_security_ctx {
             } else {
                 keyxchg_channel = *cap.channelname;
             }
-            std::cout << "cwrap" << cap << std::endl;
             auto keyExchangeManager =
                 std::make_unique<lcmsec_impl::KeyExchangeLCMHandler>(cap, *ev_loop, *lcm);
             // FIXME: this is way too hacky, use magic numbers probably or find prefixes that not as

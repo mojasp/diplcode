@@ -1478,7 +1478,6 @@ lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashT
 
 
     if(!sec_params) {
-        fprintf(stderr, "Warning: initializing LCM UDPM Provider without security!\n");
         lcm->security_ctx = NULL; //already null due to calloc, but be explicit anyways
     }
     else {
