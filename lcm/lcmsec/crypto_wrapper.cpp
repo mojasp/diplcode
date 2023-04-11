@@ -26,7 +26,9 @@ class channel_crypto_ctx {
     // Buffers to avoid allocations during runtime
     Botan::secure_vector<uint8_t> IV;  // buffer for IV to avoid allocation during execution
 
-    std::string algorithm;
+    std::string algorithm_aead;
+    std::string algorithm_stream;
+    int key_size;
 
     std::unique_ptr<KeyExchangeLCMHandler> keyExchangeManager;
 
@@ -37,16 +39,30 @@ class channel_crypto_ctx {
               // manager class when/if we want rekeying
 
     static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
-    static constexpr int KEY_SIZE = 16;  // AES-128 key size.
+    static constexpr int KEY_SIZE_CHACHA = 32;  // ChaCha20Poly1305 key size.
+    static constexpr int KEY_SIZE_AESGCM = 16;  // AES-128 key size.
 
   public:
     int getSenderID() { return sender_id; }
 
+    const std::string& get_algorithm_aead () {return algorithm_aead;}
+    const std::string& get_algorithm_stream () {return algorithm_stream;}
+
     explicit channel_crypto_ctx(std::unique_ptr<KeyExchangeLCMHandler> mgr, uint16_t sender_id,
-                                std::string algorithm)
-        : keyExchangeManager(MOV(mgr)), algorithm(MOV(algorithm)), sender_id(sender_id)
+                                std::string _algorithm)
+        : keyExchangeManager(MOV(mgr)), algorithm_aead(MOV(_algorithm)), sender_id(sender_id)
     // read sender_id from our own certificate FIXME -> urn parsing
     {
+        if(algorithm_aead == "AES-128/GCM") {
+            key_size = KEY_SIZE_AESGCM;
+            algorithm_stream="CTR(AES-128)";
+        }
+        else if(algorithm_aead=="ChaCha20Poly1305") {
+            key_size=KEY_SIZE_CHACHA;
+            algorithm_stream="ChaCha20";
+        }
+        else throw lcmsec_exception("internal error: invalid algorithm '" + algorithm_aead + "' string in channel_crypto_ctx. Was: '");
+
         IV.resize(LCMCRYPTO_IVSIZE);
         salt.resize(LCMCRYPTO_SESSION_NONCE_SIZE);
     }
@@ -73,7 +89,7 @@ class channel_crypto_ctx {
     void set_cipher_key(Cipher &cipher)
     {
         if (!key || keyExchangeManager->hasNewKey())
-            key = keyExchangeManager->get_session_key(KEY_SIZE);
+            key = keyExchangeManager->get_session_key(key_size);
 
         cipher.set_key(&(key->operator[](0)), key->size());
     }
@@ -108,9 +124,16 @@ class _lcm_security_ctx {
     std::unique_ptr<lcmsec_impl::eventloop> ev_loop;
 
   public:
-    _lcm_security_ctx(lcm_security_parameters *params, size_t param_len, const char *network)
+    _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
     {
         auto &param = *params; //FIXME multiple instances
+        std::string algorithm;
+        if(!param.algorithm) throw lcmsec_impl::lcmsec_exception("lcm_security_parameters.algorithm may not be NULL");
+        algorithm = std::string(param.algorithm);
+        if(algorithm == "") algorithm = std::string("AES-128/GCM");
+        else if(!(algorithm == "AES-128/GCM" || algorithm=="ChaCha20Poly1305")) {
+            throw lcmsec_impl::lcmsec_exception("invalid algorithm string ('"+algorithm+"') in lcm_security_parameters");
+        }
 
         lcm = std::make_unique<lcm::LCM>(param.keyexchange_url);
         if(!lcm->good()){
@@ -118,7 +141,6 @@ class _lcm_security_ctx {
         }
 
         ev_loop=std::make_unique<lcmsec_impl::eventloop>(*lcm);
-
 
         // Usage of constant singleton classes to get global access to the private key and
         // certificates in the future - this should probably be changed to something more robust
@@ -164,10 +186,10 @@ class _lcm_security_ctx {
                 strncpy(copy, cap.channelname->c_str(), LCM_MAX_CHANNEL_NAME_LENGTH);
                 copy[LCM_MAX_CHANNEL_NAME_LENGTH] = 0;
                 channel_ctx_map[copy] = std::make_unique<lcmsec_impl::channel_crypto_ctx>(
-                    MOV(keyExchangeManager), cap.uid, "AES_128/GCM");
+                    MOV(keyExchangeManager), cap.uid, algorithm);
             } else {
                 group_ctx = std::make_unique<lcmsec_impl::channel_crypto_ctx>(
-                    MOV(keyExchangeManager), cap.uid, "AES_128/GCM");
+                    MOV(keyExchangeManager), cap.uid, algorithm);
             }
         }
         ev_loop->run(1 + channel_ctx_map.size());
@@ -210,9 +232,9 @@ class _lcm_security_ctx {
 };
 
 extern "C" lcm_security_ctx *lcm_create_security_ctx(lcm_security_parameters *params,
-                                                     size_t param_len, const char *network)
+                                                     size_t param_len)
 {
-    return new _lcm_security_ctx(params, param_len, network);
+    return new _lcm_security_ctx(params, param_len);
 }
 
 extern "C" int lcm_crypto_perform_keyexchange(lcm_security_ctx *ctx)
@@ -237,7 +259,7 @@ extern "C" int lcm_encrypt_message(lcm_security_ctx *ctx, const char *channelnam
         return LCMCRYPTO_ENCRYPTION_ERROR;
     }
 
-    auto enc = Botan::AEAD_Mode::create_or_throw("AES-128/GCM", Botan::ENCRYPTION);
+    auto enc = Botan::AEAD_Mode::create_or_throw(crypto_ctx->get_algorithm_aead(), Botan::ENCRYPTION);
 
     crypto_ctx->set_cipher_key(*enc);
     enc->set_associated_data((const uint8_t *) channelname, strlen(channelname));
@@ -268,7 +290,7 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx *ctx, const char *channelnam
         return LCMCRYPTO_DECRYPTION_ERROR;
     }
 
-    auto dec = Botan::AEAD_Mode::create_or_throw("AES-128/GCM", Botan::DECRYPTION);
+    auto dec = Botan::AEAD_Mode::create_or_throw(crypto_ctx->get_algorithm_aead(), Botan::DECRYPTION);
 
     crypto_ctx->set_cipher_key(*dec);
     dec->set_associated_data((const uint8_t *) channelname,
@@ -299,7 +321,7 @@ extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, co
     assert(ptextsize == ctextsize);
     auto crypto_ctx = ctx->group_ctx.get();
 
-    auto cipher = Botan::StreamCipher::create_or_throw("CTR(AES-128)");
+    auto cipher = Botan::StreamCipher::create_or_throw(crypto_ctx->get_algorithm_stream());
 
     crypto_ctx->set_cipher_key(*cipher);
 
@@ -327,7 +349,7 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
 {
     auto crypto_ctx = ctx->group_ctx.get();
 
-    auto cipher = Botan::StreamCipher::create_or_throw("CTR(AES-128)");
+    auto cipher = Botan::StreamCipher::create_or_throw(crypto_ctx->get_algorithm_stream());
 
     crypto_ctx->set_cipher_key(*cipher);
 

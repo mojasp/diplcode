@@ -1483,7 +1483,7 @@ lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashT
     }
     else {
         fprintf(stderr, "Initializing LCM UDPM Provider with security enabled\n");
-        lcm->security_ctx = lcm_create_security_ctx(sec_params, param_len, network);
+        lcm->security_ctx = lcm_create_security_ctx(sec_params, param_len);
     }
 
     lcm->lcm = parent;

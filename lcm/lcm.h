@@ -198,6 +198,8 @@ typedef struct {
      * @brief string describing the Cryptographic algorithm and mode of operation used
      * Possible options are:
          "AES-128/GCM"
+         "ChaChaPoly1305"
+         May not be null. If empty, will be set to AES-128/GCM
      */
     char *algorithm;
 
