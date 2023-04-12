@@ -772,9 +772,6 @@ void KeyExchangeManager::gkexchg_finished()
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
 {
-    // leave this exception for now: it should not be an exception at all, instead, the error
-    // should be signaled to the library user with an error code. However, this is will change
-    // when the API reaches a more mature stater / is designed properly
     if (!shared_secret)
         throw std::runtime_error(
             "get_session_key(): No shared secret has been agreed upon on channel " +

@@ -11,6 +11,7 @@
 #include <botan/x509cert.h>
 #include <udpm_util.h>
 
+#include <cstdio>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -30,6 +31,12 @@ class channel_crypto_ctx {
     std::string algorithm_stream;
     int key_size;
 
+    //FIXME use subclass instead
+    bool is_group;
+    std::optional<std::unique_ptr<Botan::AEAD_Mode>> cipher_aead_enc;
+    std::optional<std::unique_ptr<Botan::AEAD_Mode>> cipher_aead_dec;
+    std::optional<std::unique_ptr<Botan::StreamCipher>> cipher_stream;
+
     std::unique_ptr<KeyExchangeLCMHandler> keyExchangeManager;
 
     Botan::secure_vector<uint8_t> salt{0};  // FIXME: think about the salt.
@@ -45,23 +52,33 @@ class channel_crypto_ctx {
   public:
     int getSenderID() { return sender_id; }
 
-    const std::string& get_algorithm_aead () {return algorithm_aead;}
-    const std::string& get_algorithm_stream () {return algorithm_stream;}
+    const std::string &get_algorithm_aead() { return algorithm_aead; }
+    const std::string &get_algorithm_stream() { return algorithm_stream; }
 
     explicit channel_crypto_ctx(std::unique_ptr<KeyExchangeLCMHandler> mgr, uint16_t sender_id,
-                                std::string _algorithm)
-        : keyExchangeManager(MOV(mgr)), algorithm_aead(MOV(_algorithm)), sender_id(sender_id)
+                                std::string _algorithm, bool is_group = false)
+        : keyExchangeManager(MOV(mgr)),
+          algorithm_aead(MOV(_algorithm)),
+          sender_id(sender_id),
+          is_group(is_group)
     // read sender_id from our own certificate FIXME -> urn parsing
     {
-        if(algorithm_aead == "AES-128/GCM") {
+        if (algorithm_aead == "AES-128/GCM") {
             key_size = KEY_SIZE_AESGCM;
-            algorithm_stream="CTR(AES-128)";
+            algorithm_stream = "CTR(AES-128)";
+        } else if (algorithm_aead == "ChaCha20Poly1305") {
+            key_size = KEY_SIZE_CHACHA;
+            algorithm_stream = "ChaCha20";
+        } else
+            throw lcmsec_exception("internal error: invalid algorithm '" + algorithm_aead +
+                                   "' string in channel_crypto_ctx. Was: '");
+
+        if (is_group) {
+            cipher_stream = Botan::StreamCipher::create_or_throw(algorithm_stream);
+        } else {
+            cipher_aead_enc = Botan::AEAD_Mode::create_or_throw(algorithm_aead, Botan::ENCRYPTION);
+            cipher_aead_dec = Botan::AEAD_Mode::create_or_throw(algorithm_aead, Botan::DECRYPTION);
         }
-        else if(algorithm_aead=="ChaCha20Poly1305") {
-            key_size=KEY_SIZE_CHACHA;
-            algorithm_stream="ChaCha20";
-        }
-        else throw lcmsec_exception("internal error: invalid algorithm '" + algorithm_aead + "' string in channel_crypto_ctx. Was: '");
 
         IV.resize(LCMCRYPTO_IVSIZE);
         salt.resize(LCMCRYPTO_SESSION_NONCE_SIZE);
@@ -85,13 +102,33 @@ class channel_crypto_ctx {
         return get_decryption_IV(seqno, this->sender_id);
     }
 
-    template <typename Cipher>
-    void set_cipher_key(Cipher &cipher)
+    Botan::AEAD_Mode *get_dec()
     {
-        if (!key || keyExchangeManager->hasNewKey())
+        if (!key || keyExchangeManager->hasNewKey()){
             key = keyExchangeManager->get_session_key(key_size);
+            cipher_aead_dec.value()->set_key(&(key->operator[](0)), key->size());
+            cipher_aead_enc.value()->set_key(&(key->operator[](0)), key->size());
+        }
+        return cipher_aead_dec.value().get();
+    }
 
-        cipher.set_key(&(key->operator[](0)), key->size());
+    Botan::AEAD_Mode *get_enc()
+    {
+        if (!key || keyExchangeManager->hasNewKey()){
+            key = keyExchangeManager->get_session_key(key_size);
+            cipher_aead_dec.value()->set_key(&(key->operator[](0)), key->size());
+            cipher_aead_enc.value()->set_key(&(key->operator[](0)), key->size());
+        }
+        return cipher_aead_enc.value().get();
+    }
+
+    Botan::StreamCipher *get_stream()
+    {
+        if (!key || keyExchangeManager->hasNewKey()){
+            key = keyExchangeManager->get_session_key(key_size);
+            cipher_stream.value()->set_key(&(key->operator[](0)), key->size());
+        }
+        return cipher_stream.value().get();
     }
 
     Botan::secure_vector<uint8_t>
@@ -126,21 +163,25 @@ class _lcm_security_ctx {
   public:
     _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
     {
-        auto &param = *params; //FIXME multiple instances
+        auto &param = *params;  // FIXME multiple instances
         std::string algorithm;
-        if(!param.algorithm) throw lcmsec_impl::lcmsec_exception("lcm_security_parameters.algorithm may not be NULL");
+        if (!param.algorithm)
+            throw lcmsec_impl::lcmsec_exception(
+                "lcm_security_parameters.algorithm may not be NULL");
         algorithm = std::string(param.algorithm);
-        if(algorithm == "") algorithm = std::string("AES-128/GCM");
-        else if(!(algorithm == "AES-128/GCM" || algorithm=="ChaCha20Poly1305")) {
-            throw lcmsec_impl::lcmsec_exception("invalid algorithm string ('"+algorithm+"') in lcm_security_parameters");
+        if (algorithm == "")
+            algorithm = std::string("AES-128/GCM");
+        else if (!(algorithm == "AES-128/GCM" || algorithm == "ChaCha20Poly1305")) {
+            throw lcmsec_impl::lcmsec_exception("invalid algorithm string ('" + algorithm +
+                                                "') in lcm_security_parameters");
         }
 
         lcm = std::make_unique<lcm::LCM>(param.keyexchange_url);
-        if(!lcm->good()){
-            throw  std::runtime_error ("lcm instance for keyagreemend: creation failed");
+        if (!lcm->good()) {
+            throw std::runtime_error("lcm instance for keyagreemend: creation failed");
         }
 
-        ev_loop=std::make_unique<lcmsec_impl::eventloop>(*lcm);
+        ev_loop = std::make_unique<lcmsec_impl::eventloop>(*lcm);
 
         // Usage of constant singleton classes to get global access to the private key and
         // certificates in the future - this should probably be changed to something more robust
@@ -188,7 +229,7 @@ class _lcm_security_ctx {
                     MOV(keyExchangeManager), cap.uid, algorithm);
             } else {
                 group_ctx = std::make_unique<lcmsec_impl::channel_crypto_ctx>(
-                    MOV(keyExchangeManager), cap.uid, algorithm);
+                    MOV(keyExchangeManager), cap.uid, algorithm, true);
             }
         }
         ev_loop->run(1 + channel_ctx_map.size());
@@ -258,9 +299,8 @@ extern "C" int lcm_encrypt_message(lcm_security_ctx *ctx, const char *channelnam
         return LCMCRYPTO_ENCRYPTION_ERROR;
     }
 
-    auto enc = Botan::AEAD_Mode::create_or_throw(crypto_ctx->get_algorithm_aead(), Botan::ENCRYPTION);
+    auto enc = crypto_ctx->get_enc();
 
-    crypto_ctx->set_cipher_key(*enc);
     enc->set_associated_data((const uint8_t *) channelname, strlen(channelname));
 
     auto IV = crypto_ctx->get_encryption_IV(seqno);
@@ -289,9 +329,8 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx *ctx, const char *channelnam
         return LCMCRYPTO_DECRYPTION_ERROR;
     }
 
-    auto dec = Botan::AEAD_Mode::create_or_throw(crypto_ctx->get_algorithm_aead(), Botan::DECRYPTION);
+    auto dec = crypto_ctx->get_dec();
 
-    crypto_ctx->set_cipher_key(*dec);
     dec->set_associated_data((const uint8_t *) channelname,
                              strnlen(channelname, LCM_MAX_CHANNEL_NAME_LENGTH));
 
@@ -320,9 +359,7 @@ extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, co
     assert(ptextsize == ctextsize);
     auto crypto_ctx = ctx->group_ctx.get();
 
-    auto cipher = Botan::StreamCipher::create_or_throw(crypto_ctx->get_algorithm_stream());
-
-    crypto_ctx->set_cipher_key(*cipher);
+    auto cipher = crypto_ctx->get_stream();
 
     auto IV = crypto_ctx->get_encryption_IV(seqno);
     cipher->set_iv(&IV[0], IV.size());
@@ -348,9 +385,7 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
 {
     auto crypto_ctx = ctx->group_ctx.get();
 
-    auto cipher = Botan::StreamCipher::create_or_throw(crypto_ctx->get_algorithm_stream());
-
-    crypto_ctx->set_cipher_key(*cipher);
+    auto cipher = crypto_ctx->get_stream();
 
     auto IV = crypto_ctx->get_decryption_IV(seqno, sender_id);
     cipher->set_iv(&IV[0], IV.size());
