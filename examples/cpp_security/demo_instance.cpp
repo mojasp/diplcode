@@ -16,8 +16,8 @@
 #include <lcm/lcm-cpp.hpp>
 #include <list>
 #include <optional>
-#include <thread>
 #include <stdexcept>
+#include <thread>
 
 #include "exlcm/example_t.hpp"
 #include "tomlplusplus/toml.hpp"
@@ -80,7 +80,7 @@ void send_on_channel(std::string channel, lcm::LCM &lcm,
         my_data.orientation[2] = 0;
         my_data.orientation[3] = 0;
 
-//#define SEND_FRAGMENTED
+// #define SEND_FRAGMENTED
 #ifdef SEND_FRAGMENTED
         my_data.num_ranges = 40000;
 #else
@@ -103,8 +103,6 @@ void setup_channel(toml::table &channel_config, lcm::LCM &lcm)
     auto channelname = channel_config["channelname"].value<std::string>().value();
     auto send = channel_config["send"].value<bool>().value();
     auto recv = channel_config["receive"].value<bool>().value();
-    // FIXME: configure channel key and nonce once that functionality is implemented in the lcm
-    // backend
 
     if (recv) {
         std::cout << instance_name << ": subscribing to channel " << channelname << "\n";
@@ -168,7 +166,7 @@ int main(int argc, char **argv)
         group_params.certificate = cert.data();
         group_params.keyfile = privkey.data();
         group_params.root_ca = root_ca.data();
-        group_params.keyexchange_in_background = false;
+        group_params.keyexchange_in_background = true;
         sec_params.push_back(group_params);
 
         lcm::LCM lcm(multicast_url.value<std::string>().value(), sec_params.data(),
@@ -186,8 +184,6 @@ int main(int argc, char **argv)
             }
         }
 
-        std::thread kxchg (&lcm::LCM::perform_keyexchange, lcm);
-
         while (true) {
             for (auto &f : sendfunctions) {
                 f();
@@ -197,12 +193,14 @@ int main(int argc, char **argv)
                 return 1;
             }
         }
-    } catch (const std::bad_optional_access &err) {
-        std::cerr << "missing configuration: " << err.what() << "\n";
-
-        // threads might have been initialized already, try to shutdown gracefully...
-        std::cerr << "joining already dispatched threads... \n";
-        return 1;
     }
-    return 0;
+catch (const std::bad_optional_access &err)
+{
+    std::cerr << "missing configuration: " << err.what() << "\n";
+
+    // threads might have been initialized already, try to shutdown gracefully...
+    std::cerr << "joining already dispatched threads... \n";
+    return 1;
+}
+return 0;
 }

@@ -954,8 +954,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
                             unsigned int datalen)
 {
     if(!lcm->security_ctx) {
-        //FIXME: signal that we don't want to encrypt in another way - explicit part of the interface instead of nullpointer - to avoid missconfiguration
-        fprintf(stderr, "%s\n", "no security context associated with lcm instance, exiting...\n");
+        fprintf(stderr, "%s\n", "no security context associated with lcm instance, cannot publish securely...\n");
         return -1;
     }
 
@@ -1122,7 +1121,6 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
 static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
                             unsigned int datalen) {
     if(!lcm->security_ctx) {
-        //FIXME: signal that we don't want to encrypt in another way - explicit part of the interface instead of missing pointer
         return lcm_udpm_publish_insecure(lcm, channel, data, datalen);
     }
     return lcm_udpm_publish_secure(lcm, channel, data, datalen);

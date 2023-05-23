@@ -160,6 +160,9 @@ class _lcm_security_ctx {
 
     std::unique_ptr<lcmsec_impl::eventloop> ev_loop;
 
+    std::atomic_bool signal_shutdown=false;
+    std::vector<std::thread> keyagree_threads;
+
   public:
     _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
     {
@@ -236,20 +239,24 @@ class _lcm_security_ctx {
 
         if (params->keyexchange_in_background) {
             std::thread t([this] { perform_keyexchange(); });
-            t.detach();  // FIXME: graceful shutdown
+            keyagree_threads.push_back(MOV(t));
         }
     }
 
-    int perform_keyexchange()
+    void perform_keyexchange()
     {
         // continuously run keyexchange
         // Note that the listeners are already set up
-        ev_loop->run();
-        return 0;
+        ev_loop->run(signal_shutdown);
     }
 
     ~_lcm_security_ctx()
     {
+        //end keyagree threads FIRST in case they access the memory we clear and free later
+        signal_shutdown=true;
+        for(std::thread& t : keyagree_threads){
+            t.join();
+        }
         for (auto it = channel_ctx_map.begin(); it != channel_ctx_map.end();) {
             char *name = it->first;
             std::memset(
@@ -279,7 +286,8 @@ extern "C" lcm_security_ctx *lcm_create_security_ctx(lcm_security_parameters *pa
 
 extern "C" int lcm_crypto_perform_keyexchange(lcm_security_ctx *ctx)
 {
-    return ctx->perform_keyexchange();
+    ctx->perform_keyexchange();
+    return 0;
 }
 
 #include <vector>

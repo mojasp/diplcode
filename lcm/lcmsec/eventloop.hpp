@@ -192,9 +192,9 @@ class eventloop {
     /*
      * run forever - useful for performing keyexchg in background
      */
-    inline void run()
+    inline void run(const volatile std::atomic_bool* signal_shutdown)
     {
-        while (true) {
+        while (!signal_shutdown) {
             handle_tasks();
             handle_lcm();
         }
