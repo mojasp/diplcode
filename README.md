@@ -18,7 +18,7 @@ This is achieved with the use of:
 * No distinction between subscribers and publishers, each subscriber is also allowed to publish messages. This makes it possible to use a single shared symmetric key, and avoids issues typically associated with multicast authentication
 * A built-in, decentralized discovery protocol
 * AES/GCM or ChaChaPoly1305 as the underlying authenticated encryption algorithm.
-* The Dutta-Barua group key agreement (modified to use EC-Cryptography) to agree on the symmetric key minimizes the number of network interactions when a publisher or subscriber joins a topic (i.e., is turned on)
+* The Dutta-Barua group key agreement (modified to use EC-Cryptography) to agree on the symmetric key while minimizing the number of network interactions when a publisher or subscriber joins a topic (i.e., is turned on)
 
 For more informations please refer to the paper we submitted, which will be provided here shortly.
 
