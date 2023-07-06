@@ -247,7 +247,7 @@ class _lcm_security_ctx {
     {
         // continuously run keyexchange
         // Note that the listeners are already set up
-        ev_loop->run(signal_shutdown);
+        ev_loop->run(&signal_shutdown);
     }
 
     ~_lcm_security_ctx()

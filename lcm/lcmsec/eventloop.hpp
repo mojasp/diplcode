@@ -25,55 +25,13 @@ typedef int SOCKET;
 
 namespace lcmsec_impl {
 /*
- * Brief explanation of the eventloop logic
- *
- *    NOTE: THIS IS MOST LIKELY OUTDATED
- *
  * Motivation:
  *  We do need some multitasking because we have to do network IO to perform the
- *  groupkeyexchange. If multiple channels are to be configured (which should be supported), doing
+ *  groupkeyexchange. If multiple channels are to be configured, doing
  *  the groupkeyexchange for each channel sequentially would be grossly inefficient; Thus we need
  *  some form of eventloop that supports lcm.
  *
- * rough Pseudocode of the group key exchange logic/usage of the eventloop:
- * begin:
- *
- *  lcm = lcm_instance;
- *  channels = configured_channels;
- *
- *  managers = map<channel, keyexchgmanager> //Save this somewhere to enable dynamic execution of
- *                                           //protocol later on
- *  int unfinished_channels = sizeof(configured_channels)
- *
- *  ev = Eventloop(&managers);
- *
- *  lcmcallback = function(channel ch) { //Closure over managers
- *      manager = managers.lookup(ch)
- *      if(manager.round2_prerequisites)
- *          ev.register_task(do_round_2, manager)
- *      else if(manager.round3_prerequisites)
- *          ev.register.(do_round_3, manager, &unfinished_channels) //compute key and decrement
- *                                                                  //unfinished_channels
- *  }
- *
- *  for ch in channels:
- *      lcm.subscribe(ch.channelname, lcmcallback)
- *
- *      m = new keyexchgmanager(ch)
- *      managers.add(m) //will register round 1
- *
- *  evloop.run()
- *
- * end
- *
- *
- * Pseudocode of the eventloop itself:
- *  while(unfinished_channels && task is available) {
- *       lcm.listen(timeout) //Probably better to use select/poll
- *       if(task.available)
- *           do task
- *  }
- *
+ *  This thing is essentially a cooperative multitasking event loop.
  */
 
 /**
@@ -91,8 +49,8 @@ class eventloop {
 
   private:
     // linked list as storage, sorted by timepoints
-    // Strictly speaking it is only sorted in the sense that timepoints now are considered equal to
-    // those n the past
+    // Strictly speaking it is not really sorted: timepoints now are considered equal to those in
+    // the past; timepoints in the future are sorted.
     std::list<listelem_t> tasks;
 
     lcm::LCM &lcm;
@@ -193,8 +151,7 @@ class eventloop {
      */
     inline void run(const volatile std::atomic_bool* signal_shutdown)
     {
-        while (!signal_shutdown) {
-            printf("eventloop hello\n");
+        while (!(*signal_shutdown)) {
             handle_tasks();
             handle_lcm();
         }
