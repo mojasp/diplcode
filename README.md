@@ -6,16 +6,16 @@ critical. It provides a publish/subscribe message passing model and automatic
 marshalling/unmarshalling code generation with bindings for applications in a
 variety of programming languages.
 
-This fork, LCMsec, is a security extensions for LCM. A brief overview of the design goals is provided here:
-* provide confidentiality, integrity and authenticity to LCM messages
-* aim to minimize both overhead and computational complexity - as such, LCMsec is designed to be usable in most environments in which LCM is used.
-* maintain the decentralized, peer-to-peer nature of LCM: no broker, no central instance to facilitate keyexchange
-* Scalable to many peers, capable of dealing with dynamic communication topologies (hosts leaving and joining a channel) efficiently
+This fork, LCMsec, is a security extensions for LCM. It:
+* provides confidentiality, integrity and authenticity to LCM messages
+* provides an attribute-based acces control mechanism with multicastgroup, port and channel granularity
+* aims to minimize both overhead and computational complexity - as such, LCMsec is designed to be usable in most environments in which LCM is used.
+* maintains the decentralized, peer-to-peer nature of LCM: no broker, no central instance to facilitate keyexchange
+* is scalable to many peers and capable of dealing with dynamic communication topologies (hosts leaving and joining a channel) efficiently
 
 This is achieved with the use of:
 * a hybrid cryptosystem: a symmetric key is shared between all publishers and subscribers to a channel on a specific multicastgroup
 * No distinction between subscribers and publishers, each subscriber is also allowed to publish messages. This makes it possible to use a single shared symmetric key, and avoids issues typically associated with multicast authentication
-* An attribute-based access control mechanism (who is allowed to send on which channel and multicastgroups) through the use X.509 certificates
 * A built-in, decentralized discovery protocol
 * AES/GCM or ChaChaPoly1305 as the underlying authenticated encryption algorithm.
 * The Dutta-Barua group key agreement (modified to use EC-Cryptography) to agree on the symmetric key minimizes the number of network interactions when a publisher or subscriber joins a topic (i.e., is turned on)
