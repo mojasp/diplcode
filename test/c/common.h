@@ -11,7 +11,7 @@ extern "C" {
 #include "lcmtest_primitives_list_t.h"
 #include "lcmtest_primitives_t.h"
 
-#ifndef _MSC_VER
+#ifndef WIN32
 char *_strdup(const char *src);
 #endif
 
@@ -38,9 +38,6 @@ void clear_lcmtest2_cross_package_t(lcmtest2_cross_package_t *msg);
 int check_lcmtest2_another_type_t(const lcmtest2_another_type_t *msg, int expected);
 void fill_lcmtest2_another_type_t(int n, lcmtest2_another_type_t *msg);
 void clear_lcmtest2_another_type_t(lcmtest2_another_type_t *msg);
-
-char *make_tmpnam();
-void free_tmpnam(char *tmpnam);
 
 #ifdef __cplusplus
 }

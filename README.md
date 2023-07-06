@@ -6,18 +6,18 @@ critical. It provides a publish/subscribe message passing model and automatic
 marshalling/unmarshalling code generation with bindings for applications in a
 variety of programming languages.
 
-# Looking for a new maintainer
+# Roadmap
 
-2022 September - LCM isn't actively updated much these days. It should be
-considered fairly stable on the platforms it was originally developed on, but
-new feature development and bug fixes are unlikely. If you are interested in
-taking over as the project maintainer and steering its direction going forwards,
-please send a message to Albert.
+The LCM project is active again. The current near-term plan is to:
+
+* Clear deprecation warnings from build for all language targets
+* Flush backlog of PRs
+* Cut a new release
 
 # Quick Links
 
 * [LCM downloads](https://github.com/lcm-proj/lcm/releases)
-* [Website and documentation](https://lcm-proj.github.io)
+* [Website and documentation](https://lcm-proj.github.io/lcm)
 
 # LCM-sec
 
@@ -103,19 +103,22 @@ The behaviour of the demo_instance (channels they send on / subscribe to) is the
 
 * Platforms:
   * GNU/Linux
-  * OS X
-  * Windows
-  * Any POSIX-1.2001 system (e.g., Cygwin, Solaris, BSD, etc.)
+      * Ubuntu (20.04 and 22.04)
+      * Fedora (37)
+  * macOS (11 and 12)
+  * Windows (2019 and 2022) via MSYS2
 * Languages
   * C
   * C++
-  * C#
-  * Go
   * Java
   * Lua
   * MATLAB
   * Python
 
-# Build Status (master)
+## Unmaintained languages
 
-[![Build Status](https://travis-ci.com/lcm-proj/lcm.svg?branch=master)](https://travis-ci.com/lcm-proj/lcm)
+The following languages are currently unmaintained. PRs for these languages are still welcome and if
+you are interested in maintaining them please let us know.
+
+ * Go
+ * C#/.NET

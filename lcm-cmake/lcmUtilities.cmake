@@ -31,7 +31,7 @@ if(WIN32)
   # Need 'cmake -E env'
   cmake_minimum_required(VERSION 3.1.0)
 else()
-  cmake_minimum_required(VERSION 2.8.3)
+  cmake_minimum_required(VERSION 2.8.12)
 endif()
 include(CMakeParseArguments)
 
@@ -360,20 +360,11 @@ function(lcm_wrap_types)
 
     # Define build command for input file
     get_filename_component(_lcmtype_full "${_lcmtype}" ABSOLUTE)
-    if(WIN32)
-      add_custom_command(
-        OUTPUT ${_outputs}
-        COMMAND ${CMAKE_COMMAND} -E env "PATH=${LCM_LCMGEN_PATH}"
-          $<TARGET_FILE:${LCM_NAMESPACE}lcm-gen> ${_args} ${_lcmtype_full}
-        DEPENDS ${_lcmtype}
-      )
-    else()
-      add_custom_command(
-        OUTPUT ${_outputs}
-        COMMAND ${LCM_NAMESPACE}lcm-gen ${_args} ${_lcmtype_full}
-        DEPENDS ${_lcmtype}
-      )
-    endif()
+    add_custom_command(
+      OUTPUT ${_outputs}
+      COMMAND ${LCM_NAMESPACE}lcm-gen ${_args} ${_lcmtype_full}
+      DEPENDS ${_lcmtype}
+    )
   endforeach()
 
   # Finalize aggregate headers and packages
@@ -499,7 +490,7 @@ function(lcm_install_python)
       return()
     endif()
     execute_process(
-      COMMAND "${PYTHON_EXECUTABLE}" -c "if True:
+      COMMAND "${Python_EXECUTABLE}" -c "if True:
         from distutils import sysconfig as sc
         print(sc.get_python_lib(prefix='', plat_specific=True))"
       OUTPUT_VARIABLE _DESTINATION

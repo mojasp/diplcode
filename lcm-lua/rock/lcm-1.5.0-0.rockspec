@@ -1,5 +1,5 @@
 package = "lcm"
-version = "1.3.0-0"
+version = "1.5.0-0"
 source = {
   url = "http://github.com/lcm-proj/lcm"
 }
@@ -13,7 +13,7 @@ emphasizes simplicity in usage, exhibits high performance under heavy load, and
 runs on a variety of programming languages and operating systems.
 
 The LCM project is located here:
-http://lcm-proj.github.io/
+http://lcm-proj.github.io/lcm/
   ]],
   homepage = "http://github.com/lcm-proj/lcm",
   license = "LGPL v2.1"

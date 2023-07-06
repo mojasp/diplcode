@@ -1,10 +1,12 @@
 
 #define _WIN32_WINNT 0x0501
+#include "WinPorting.h"
+
+#include <Mswsock.h>
 #include <stdio.h>
 #include <winsock2.h>
-#include <Mswsock.h>
 
-#include "WinPorting.h"
+#include <cstdint>
 
 #define ARBITRARY_START_PORT 10000
 //	The following data allows multiple processes to access the LastSocket variable
@@ -205,7 +207,7 @@ size_t sendmsg(SOCKET s, const struct msghdr *msg, int flags)
 
 int gettimeofday(struct timeval *tv, struct timezone *tz)  // tz is not used in any lcm code
 {
-    _int64 ftUNIXTime, ftNow, secNow, usec;
+    int64_t ftUNIXTime, ftNow, secNow, usec;
     SYSTEMTIME UNIXStart;
 
     UNIXStart.wYear = 1970;

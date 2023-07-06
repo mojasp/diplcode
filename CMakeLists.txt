@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.11)
 
+if(POLICY CMP0111)
+  cmake_policy(SET CMP0111 NEW)
+endif()
+
 project(lcm)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -16,17 +20,10 @@ include(lcm-cmake/functions.cmake)
 include(lcm-cmake/version.cmake)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
-if (WIN32)
-  add_definitions(-DWIN32 -D_CRT_SECURE_NO_WARNINGS -D__STDC_LIMIT_MACROS -DNOMINMAX)
-  include_directories(${lcm_SOURCE_DIR}/WinSpecific/include)
-  include_directories(${lcm_SOURCE_DIR}/WinSpecific/getopt)
-  include_directories(${lcm_SOURCE_DIR})
-  add_subdirectory(WinSpecific)
-  set(lcm-winport lcm-winport)
-  get_filename_component(LCM_LCMGEN_PATH ${GLIB2_GLIB_RUNTIME} DIRECTORY)
-  set(LCM_USE_GLIB_RUNTIME "set(LCM_LCMGEN_PATH \"${LCM_LCMGEN_PATH}\")")
-else()
-  set(lcm-winport)
+
+# Set CMAKE_MACOSX_RPATH on macOS to satisfy policy CMP0042.
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  set(CMAKE_MACOSX_RPATH FALSE)
 endif()
 
 # Core modules
@@ -39,20 +36,6 @@ if(LCM_ENABLE_EXAMPLES)
   add_subdirectory(liblcm-test)
 endif()
 
-# Documentation (Main, C/C++, .NET)
-add_subdirectory(docs)
-
-# Java
-lcm_option(
-  LCM_ENABLE_JAVA
-  "Build Java bindings and utilities"
-  JAVA_FOUND Java 1.6)
-if(LCM_ENABLE_JAVA)
-  add_subdirectory(lcm-java)
-  add_custom_target(lcm-spy DEPENDS lcm-spy-alias)
-  add_custom_target(lcm-logplayer-gui DEPENDS lcm-logplayer-gui-alias)
-endif()
-
 # Python
 lcm_option(
   LCM_ENABLE_PYTHON
@@ -60,6 +43,20 @@ lcm_option(
   PYTHON_FOUND Python)
 if(LCM_ENABLE_PYTHON)
   add_subdirectory(lcm-python)
+endif()
+
+# Documentation (Main, C/C++, .NET)
+add_subdirectory(docs)
+
+# Java
+lcm_option(
+  LCM_ENABLE_JAVA
+  "Build Java bindings and utilities"
+  JAVA_FOUND Java 1.8)
+if(LCM_ENABLE_JAVA)
+  add_subdirectory(lcm-java)
+  add_custom_target(lcm-spy DEPENDS lcm-spy-alias)
+  add_custom_target(lcm-logplayer-gui DEPENDS lcm-logplayer-gui-alias)
 endif()
 
 # Lua

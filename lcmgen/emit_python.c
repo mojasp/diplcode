@@ -1,24 +1,15 @@
 #include <assert.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <glib.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
-#ifdef WIN32
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
-#include <lcm/windows/WinPorting.h>
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <inttypes.h>
 #include <unistd.h>
-#endif
-
-#include <glib.h>
 
 #include "lcmgen.h"
 
@@ -53,18 +44,16 @@ static void mkdir_with_parents(const char *path, mode_t mode)
     g_mkdir_with_parents(path, 0755);
 #else
     int len = strlen(path);
+    char *dirpath = malloc(len + 1);
     for (int i = 0; i < len; i++) {
         if (path[i] == '/') {
-            char *dirpath = (char *) malloc(i + 1);
             strncpy(dirpath, path, i);
-            dirpath[i] = 0;
-
+            dirpath[i] = '\0';
             mkdir(dirpath, mode);
-            free(dirpath);
-
             i++;  // skip the '/'
         }
     }
+    free(dirpath);
 #endif
 }
 
@@ -209,10 +198,11 @@ static void _emit_decode_list(const lcmgen_t *lcm, FILE *f, lcm_struct_t *ls, lc
         emit(indent, "%sbuf.read(%s%s)%s", accessor, fixed_len ? "" : "self.", len, suffix);
     } else if (!strcmp("boolean", tn)) {
         if (fixed_len) {
-            emit(indent, "%s[bool(x) for x in struct.unpack('>%s%c', buf.read(%d))]%s", accessor, len,
-                 _struct_format(lm), atoi(len) * _primitive_type_size(tn), suffix);
+            emit(indent, "%s[bool(x) for x in struct.unpack('>%s%c', buf.read(%d))]%s", accessor,
+                 len, _struct_format(lm), atoi(len) * _primitive_type_size(tn), suffix);
         } else {
-            emit(indent, "%s[bool(x) for x in struct.unpack('>%%d%c' %% self.%s, buf.read(self.%s))]%s",
+            emit(indent,
+                 "%s[bool(x) for x in struct.unpack('>%%d%c' %% self.%s, buf.read(self.%s))]%s",
                  accessor, _struct_format(lm), len, len, suffix);
         }
     } else if (!strcmp("int8_t", tn) || !strcmp("int16_t", tn) || !strcmp("int32_t", tn) ||
@@ -697,11 +687,20 @@ emit_package (lcmgen_t *lcm, _package_contents_t *pc)
     int have_package = dirs[0] != NULL;
     int write_init_py = !getopt_get_bool(lcm->gopt, "python-no-init");
 
-    sprintf (package_dir_prefix, "%s%s", getopt_get_string(lcm->gopt, "ppath"), 
-            strlen(getopt_get_string(lcm->gopt, "ppath")) > 0 ? 
-            G_DIR_SEPARATOR_S : "");
-    sprintf(package_dir, "%s%s%s", package_dir_prefix, pdname,
-            have_package ? G_DIR_SEPARATOR_S : "");
+    int ret = snprintf(package_dir_prefix, PATH_MAX, "%s%s", getopt_get_string(lcm->gopt, "ppath"),
+                       strlen(getopt_get_string(lcm->gopt, "ppath")) > 0 ? G_DIR_SEPARATOR_S : "");
+    if (ret >= PATH_MAX || ret < 0) {
+	    free(pdname);
+	    err("Could not create package directory prefix string\n");
+	    return -1;
+    }
+    ret = snprintf(package_dir, PATH_MAX, "%s%s%s", package_dir_prefix, pdname,
+                   have_package ? G_DIR_SEPARATOR_S : "");
+    if (ret >= PATH_MAX || ret < 0) {
+	    free(pdname);
+	    err("Could not create package directory string\n");
+	    return -1;
+    }
     free (pdname);
     if (strlen (package_dir)) {
         if (! g_file_test (package_dir, G_FILE_TEST_EXISTS)) {
@@ -812,7 +811,11 @@ emit_package (lcmgen_t *lcm, _package_contents_t *pc)
         lcm_enum_t *le = (lcm_enum_t *) g_ptr_array_index (pc->enums, i);
 
         char path[PATH_MAX];
-        sprintf (path, "%s%s.py", package_dir, le->enumname->shortname);
+        int ret = snprintf(path, sizeof(path), "%s%s.py", package_dir, le->enumname->shortname);
+        if (ret < 0) {
+            fprintf(stderr, "Error: failed to create path string");
+            return -1;
+        }
 
         if(init_py_fp && 
            !g_hash_table_lookup(init_py_imports, le->enumname->shortname))
@@ -893,7 +896,11 @@ emit_package (lcmgen_t *lcm, _package_contents_t *pc)
         lcm_struct_t *ls = (lcm_struct_t *) g_ptr_array_index(pc->structs, i);
 
         char path[PATH_MAX];
-        sprintf(path, "%s%s.py", package_dir, ls->structname->shortname);
+        int ret = snprintf(path, sizeof(path), "%s%s.py", package_dir, ls->structname->shortname);
+        if (ret < 0) {
+            fprintf(stderr, "Error: failed to create path string");
+            return -1;
+        }
 
         if (init_py_fp && !g_hash_table_lookup(init_py_imports, ls->structname->shortname))
             fprintf(init_py_fp, "from .%s import %s\n", ls->structname->shortname,

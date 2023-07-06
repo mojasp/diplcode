@@ -1,4 +1,5 @@
 #include "lualcm_hash.h"
+
 #include "lua_ver_helper.h"
 #include "stdio.h"
 
@@ -39,14 +40,18 @@ void ll_hash_makemetatable(lua_State *L)
     }
 
     const struct luaL_Reg metas[] = {
-        {"__add", impl_hash_add}, {"__tostring", impl_hash_tostring}, {NULL, NULL},
+        {"__add", impl_hash_add},
+        {"__tostring", impl_hash_tostring},
+        {NULL, NULL},
     };
 
     /* register to meta */
     luaX_registertable(L, metas);
 
     const struct luaL_Reg methods[] = {
-        {"tobytes", impl_hash_tobytes}, {"rotate", impl_hash_rotate}, {NULL, NULL},
+        {"tobytes", impl_hash_tobytes},
+        {"rotate", impl_hash_rotate},
+        {NULL, NULL},
     };
 
     /* register methods to new table, set __index */
@@ -54,11 +59,6 @@ void ll_hash_makemetatable(lua_State *L)
     lua_newtable(L);
     luaX_registertable(L, methods);
     lua_rawset(L, -3);
-
-    /* TODO hide metatable */
-    /*lua_pushstring(L, "__metatable");
-    lua_pushnil(L);
-    lua_rawset(L, -3);*/
 
     /* pop the metatable */
     lua_pop(L, 1);
@@ -75,7 +75,8 @@ void ll_hash_makemetatable(lua_State *L)
 void ll_hash_register_new(lua_State *L)
 {
     const struct luaL_Reg new_function[] = {
-        {"new", impl_hash_new}, {NULL, NULL},
+        {"new", impl_hash_new},
+        {NULL, NULL},
     };
 
     luaX_registerglobal(L, "lcm._hash", new_function);
@@ -125,8 +126,8 @@ static int impl_hash_new(lua_State *L)
     /* first arg is a string containing the provider */
     const char *hash_str = luaL_checkstring(L, 1);
 
-    /* use sscanf to parse the string */
-    /* should use uint64_t here, but it causes a warning  with sscanf */
+    /* use sscanf to parse the string, should use uint64_t here, but it causes a
+     * warning with sscanf */
     unsigned long long hash = 0;
     int matches = sscanf(hash_str, "%llx", &hash);
     if (matches != 1) {
@@ -145,8 +146,6 @@ static int impl_hash_new(lua_State *L)
 
 /**
  * Convert the hash userdata to bytes.
- *
- * TODO Endianness?
  *
  * @pre The Lua arguments on the stack:
  *     A hash userdata (self).
@@ -167,7 +166,7 @@ static int impl_hash_tobytes(lua_State *L)
 
     uint8_t *bytes = (uint8_t *) &hashu->hash;
 
-    int i;
+    size_t i;
     for (i = 0; i < sizeof(hashu->hash); i++) {
         lua_pushinteger(L, bytes[i]);
     }
@@ -212,7 +211,7 @@ static int impl_hash_rotate(lua_State *L)
     /* do a fancy modulo, because 64 is 2^8, result is always positive*/
     rotation &= 63;
 
-    hashu->hash = hashu->hash << rotation | hashu->hash >> 64 - rotation;
+    hashu->hash = hashu->hash << rotation | hashu->hash >> (64 - rotation);
 
     /* pop the rotation int from the stack, return the hash */
     lua_pop(L, 1);
@@ -270,9 +269,8 @@ static int impl_hash_tostring(lua_State *L)
     /* get the hash userdata */
     impl_hash_userdata_t *hashu = impl_hash_checkudata(L, 1);
 
-    /* convert uint64_t to string */
-    /* use snprintf because lua_pushfstring can't handle %llx */
-    /* have to cast uint64_t to avoid warning with snprintf */
+    /* convert uint64_t to string, use snprintf because lua_pushfstring can't
+     * handle %llx, have to cast uint64_t to avoid warning with snprintf */
     char hash_str[20];
 #ifndef WIN32
     snprintf(hash_str, 20, "0x%llx", (unsigned long long) hashu->hash);

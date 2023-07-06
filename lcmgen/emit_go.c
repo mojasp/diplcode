@@ -6,9 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef WIN32
 #include <unistd.h>
-#endif
 #ifdef WIN32
 #define F_OK 0                /* Test for existence.  */
 #define __STDC_FORMAT_MACROS  // Enable integer types
@@ -44,23 +42,6 @@
 
 /*
  * Simple function that takes a string like this.is.a.string and turns it into
- * this_is_a_string.
- *
- * CAUTION: memory has to be freed manually.
- */
-static char *dots_to_underscores(const char *const s)
-{
-    char *p = strdup(s);
-
-    for (char *t = p; *t != 0; t++)
-        if (*t == '.')
-            *t = '_';
-
-    return p;
-}
-
-/*
- * Simple function that takes a string like this.is.a.string and turns it into
  * this/is/a/string.
  *
  * CAUTION: memory has to be freed manually.
@@ -91,19 +72,6 @@ static char *strip_dots(const char *const s)
             p = t + 1;
 
     return strdup(p);
-}
-
-/*
- * Simple function that takes a string like this_is_a_string and turns it into
- * This_is_a_string.
- *
- * CAUTION: memory has to be freed manually.
- */
-static char *first_to_upper(const char *const str)
-{
-    char *s = strdup(str);
-    s[0] = toupper(s[0]);
-    return s;
 }
 
 /*
@@ -244,7 +212,7 @@ lcm_struct_t *lcm_find_struct(lcmgen_t *lcm, lcm_member_t *lm)
  * Calculates the fingerprint during code generation.
  *
  * Algorithm as described in:
- *     https://lcm-proj.github.io/type_specification.html
+ *     https://lcm-proj.github.io/lcm/type_specification.html
  *
  * Returns calculated fingerprint or 0 on error
  */
@@ -329,7 +297,7 @@ static char *go_membername(lcm_struct_t *ls, const char *const str, int method)
         membername = realloc(membername, len + 6);
         // add Get at the end to distinguish between field name and method
         strcat(membername, "Get()");
-        membername[len+5] = '\0';
+        membername[len + 5] = '\0';
     }
     return membername;
 }
@@ -370,7 +338,7 @@ static char *go_typename(const char *const package, const char *const typepackag
 
     // Add fingerprint suffix
     if (fingerprint != 0) {
-        g_string_append_printf(name, "_%lx", (uint64_t) fingerprint);
+        g_string_append_printf(name, "_%" PRIu64, (uint64_t) fingerprint);
     }
 
     char *ret = name->str;
@@ -387,7 +355,7 @@ char *go_filename(lcmgen_t *lcm, const char *const dir, const char *const name,
                   uint64_t fingerprint, const char *const suffix)
 {
     if (fingerprint != 0)
-        return g_strdup_printf("%s/%s_%lx%s.go", dir, name, fingerprint, suffix);
+        return g_strdup_printf("%s/%s_%" PRIu64 "%s.go", dir, name, (uint64_t) fingerprint, suffix);
     else
         return g_strdup_printf("%s/%s%s.go", dir, name, suffix);
 }
@@ -566,12 +534,12 @@ static unsigned int emit_go_array_loops(FILE *f, lcmgen_t *lcm, lcm_struct_t *ls
             const char *type =
                 map_builtintype_name(lcm_find_member(ls, dim->size)->type->lctypename);
 
-            if (slice_emit){
-	        lcm_struct_t *ls_lm = lcm_find_struct(lcm, lm);
-		uint64_t lm_fingerprint = lcm_get_fingerprint(lcm, ls_lm);
+            if (slice_emit) {
+                lcm_struct_t *ls_lm = lcm_find_struct(lcm, lm);
+                uint64_t lm_fingerprint = lcm_get_fingerprint(lcm, ls_lm);
                 emit_go_slice_make(f, n + 1, ls->structname->package, lm, n, slicestr->str, size,
                                    lm_fingerprint);
-	    }
+            }
 
             emit(1 + n, "for i%d := %s(0); i%d < p.%s; i%d++ {", n, type, n, size, n);
 
@@ -1147,7 +1115,6 @@ static void emit_go_lcm_decode(FILE *f, lcmgen_t *lcm, lcm_struct_t *ls, const c
 static void emit_go_lcm_unmarshal_binary(FILE *f, lcmgen_t *lcm, lcm_struct_t *ls,
                                          const char *const gotype, const uint64_t fingerprint)
 {
-    int readVar = 0;
     emit(0, "// UnmarshalBinary implements the BinaryUnmarshaler interface");
     emit(0, "func (p *%s) UnmarshalBinary(data []byte) (err error) {", gotype);
     if (ls->members->len) {
@@ -1214,7 +1181,7 @@ static void emit_go_lcm_unmarshal_binary(FILE *f, lcmgen_t *lcm, lcm_struct_t *l
  * Emits code to calculate the fingerprint in runtime.
  *
  * Algorithm as described in:
- *     https://lcm-proj.github.io/type_specification.html
+ *     https://lcm-proj.github.io/lcm/type_specification.html
  */
 static void emit_go_lcm_fingerprint(FILE *f, lcmgen_t *lcm, lcm_struct_t *ls,
                                     const char *const typename, const char *const gotype,

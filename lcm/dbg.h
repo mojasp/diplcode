@@ -160,10 +160,9 @@ static void dbg_init()
         return;
     } else {
         char env[256];
-        char *name;
-
         strncpy(env, dbg_env, sizeof(env));
-        for (name = strtok(env,","); name; name = strtok(NULL, ",")) {
+        env[sizeof(env) - 1] = '\0';
+        for (char *name = strtok(env,","); name; name = strtok(NULL, ",")) {
             int cancel;
             dbg_mode_t *mode;
 
@@ -191,7 +190,6 @@ static void dbg_init()
             {
                 dbg_modes = dbg_modes | mode->d_mode;    
             }
-
         }
     }
 }

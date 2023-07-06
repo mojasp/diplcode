@@ -54,7 +54,7 @@ inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 #endif
 
 // Avoid clashing with predefined _strdup
-#ifndef _MSC_VER
+#ifndef WIN32
 char *_strdup(const char *src)
 {
     int len = strlen(src);
@@ -200,7 +200,7 @@ int check_lcmtest_primitives_list_t(const lcmtest_primitives_list_t *msg, int ex
         const lcmtest_primitives_t *ex = &msg->items[n];
         CHECK_FIELD(ex->i8, -(n % 100), "%d");
         CHECK_FIELD(ex->i16, -n * 10, "%d");
-        CHECK_FIELD(ex->i64, (int64_t)(-n * 10000), "%" PRId64);
+        CHECK_FIELD(ex->i64, (int64_t) (-n * 10000), "%" PRId64);
         CHECK_FIELD(ex->position[0], (double) -n, "%f");
         CHECK_FIELD(ex->position[1], (double) -n, "%f");
         CHECK_FIELD(ex->position[2], (double) -n, "%f");
@@ -269,7 +269,7 @@ int check_lcmtest_primitives_t(const lcmtest_primitives_t *msg, int expected)
     int n = expected;
     CHECK_FIELD(msg->i8, n % 100, "%d");
     CHECK_FIELD(msg->i16, n * 10, "%d");
-    CHECK_FIELD(msg->i64, (int64_t)(n * 10000), "%" PRId64);
+    CHECK_FIELD(msg->i64, (int64_t) (n * 10000), "%" PRId64);
     CHECK_FIELD(msg->position[0], (double) n, "%f");
     CHECK_FIELD(msg->position[1], (double) n, "%f");
     CHECK_FIELD(msg->position[2], (double) n, "%f");
@@ -353,20 +353,4 @@ void fill_lcmtest2_another_type_t(int n, lcmtest2_another_type_t *msg)
 void clear_lcmtest2_another_type_t(lcmtest2_another_type_t *msg)
 {
     return;
-}
-
-char *make_tmpnam()
-{
-#ifndef WIN32
-    return tmpnam(NULL);
-#else
-    return _tempnam(NULL, NULL);
-#endif
-}
-
-void free_tmpnam(char *tmpnam)
-{
-#ifdef WIN32
-    free(tmpnam);
-#endif
 }

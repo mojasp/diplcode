@@ -11,14 +11,10 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
 #include "../lcm/lcm_version.h"
-#include "lcmgen.h"
-
-#ifdef WIN32
-#include <lcm/windows/WinPorting.h>
-#endif
-
 #include "getopt.h"
+#include "lcmgen.h"
 #include "tokenize.h"
 
 void setup_c_options(getopt_t *gopt);

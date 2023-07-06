@@ -2,16 +2,19 @@
 #define __LCM_INTERNAL_H__
 
 #include <glib.h>
+
 #include "lcm.h"
 
-// GRegex was new in GLib 2.14.0
-#if GLIB_CHECK_VERSION(2, 14, 0)
+// Several thread and synchronization API functions (e.g. g_mutex_init,
+// g_cond_init, g_thread_new, etc) require 2.32
+#if GLIB_CHECK_VERSION(2, 32, 0)
 #else
-#error "LCM requires a glib version >= 2.14.0"
+#error "LCM requires a glib version >= 2.32.0"
 #endif
 
 #ifdef WIN32
 #include <winsock2.h>
+
 #include "windows/WinPorting.h"
 #else
 // in POSIX systems, the normal read/write/close/pipe functions are fine for

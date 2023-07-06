@@ -1,24 +1,15 @@
 #include <assert.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <glib.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
-#ifdef WIN32
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
-#include <lcm/windows/WinPorting.h>
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <inttypes.h>
 #include <unistd.h>
-#endif
-
-#include <glib.h>
 
 #include "lcmgen.h"
 
@@ -54,18 +45,16 @@ static void mkdir_with_parents(const char *path, mode_t mode)
     g_mkdir_with_parents(path, 0755);
 #else
     int len = strlen(path);
+    char *dirpath = malloc(len + 1);
     for (int i = 0; i < len; i++) {
         if (path[i] == '/') {
-            char *dirpath = (char *) malloc(i + 1);
             strncpy(dirpath, path, i);
-            dirpath[i] = 0;
-
+            dirpath[i] = '\0';
             mkdir(dirpath, mode);
-            free(dirpath);
-
             i++;  // skip the '/'
         }
     }
+    free(dirpath);
 #endif
 }
 
@@ -686,7 +675,8 @@ static void emit_lua_dependencies(const lcmgen_t *lcm, FILE *f, lcm_struct_t *ls
         emit(0, "");
 
     g_ptr_array_free(deps, TRUE);
-    g_hash_table_destroy(dependencies);
+    if (dependencies)
+        g_hash_table_destroy(dependencies);
 }
 
 static void emit_lua_locals(const lcmgen_t *lcm, FILE *f, lcm_struct_t *ls)
@@ -695,7 +685,7 @@ static void emit_lua_locals(const lcmgen_t *lcm, FILE *f, lcm_struct_t *ls)
     emit(0, "local ipairs = ipairs");
     emit(0, "local table = table");
     emit(0, "local string = string");
-    emit(0, "local unpack = unpack");
+    emit(0, "local unpack = unpack or table.unpack");
     emit(0, "");
 }
 
@@ -761,10 +751,20 @@ static int emit_package(lcmgen_t *lcm, _package_contents_t *pc)
     int have_package = dirs[0] != NULL;
     int write_init_lua = !getopt_get_bool(lcm->gopt, "lua-no-init");
 
-    sprintf(package_dir_prefix, "%s%s", getopt_get_string(lcm->gopt, "lpath"),
-            strlen(getopt_get_string(lcm->gopt, "lpath")) > 0 ? G_DIR_SEPARATOR_S : "");
-    sprintf(package_dir, "%s%s%s", package_dir_prefix, pdname,
-            have_package ? G_DIR_SEPARATOR_S : "");
+    int ret = snprintf(package_dir_prefix, PATH_MAX, "%s%s", getopt_get_string(lcm->gopt, "lpath"),
+                       strlen(getopt_get_string(lcm->gopt, "lpath")) > 0 ? G_DIR_SEPARATOR_S : "");
+    if (ret >= PATH_MAX || ret < 0) {
+        free(pdname);
+        err("Could not create package directory prefix string\n");
+        return -1;
+    }
+    ret = snprintf(package_dir, PATH_MAX, "%s%s%s", package_dir_prefix, pdname,
+                   have_package ? G_DIR_SEPARATOR_S : "");
+    if (ret >= PATH_MAX || ret < 0) {
+        free(pdname);
+        err("Could not create package directory string\n");
+        return -1;
+    }
     free(pdname);
     if (strlen(package_dir)) {
         if (!g_file_test(package_dir, G_FILE_TEST_EXISTS)) {
@@ -993,7 +993,11 @@ static int emit_package(lcmgen_t *lcm, _package_contents_t *pc)
         lcm_struct_t *ls = (lcm_struct_t *) g_ptr_array_index(pc->structs, i);
 
         char path[PATH_MAX];
-        sprintf(path, "%s%s.lua", package_dir, ls->structname->shortname);
+        int ret = snprintf(path, sizeof(path), "%s%s.lua", package_dir, ls->structname->shortname);
+        if (ret < 0) {
+            fprintf(stderr, "Error: failed to create path string");
+            return -1;
+        }
 
         if (init_lua_fp) {
             // XXX add the 'require' to the appropriate init.lua
@@ -1105,7 +1109,8 @@ static int emit_package(lcmgen_t *lcm, _package_contents_t *pc)
         fclose(init_lua_fp);
     }
 
-    g_hash_table_destroy(initlua_requires);
+    if (initlua_requires)
+        g_hash_table_destroy(initlua_requires);
     return 0;
 }
 
@@ -1149,6 +1154,7 @@ int emit_lua(lcmgen_t *lcm)
 
     g_ptr_array_free(vals, TRUE);
 
-    g_hash_table_destroy(packages);
+    if (packages)
+        g_hash_table_destroy(packages);
     return 0;
 }

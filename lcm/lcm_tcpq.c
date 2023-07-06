@@ -14,7 +14,6 @@
 #else
 #include <Ws2tcpip.h>
 #include <winsock2.h>
-#include "windows/WinPorting.h"
 #endif
 
 #include "dbg.h"
@@ -53,13 +52,6 @@ static int _close_socket(int fd)
 #else
     return close(fd);
 #endif
-}
-
-static int64_t timestamp_now(void)
-{
-    GTimeVal tv;
-    g_get_current_time(&tv);
-    return (int64_t) tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
 static int _recv_fully(int fd, void *b, int len)
@@ -362,7 +354,7 @@ static int lcm_tcpq_handle(lcm_tcpq_t *self)
     lcm_recv_buf_t rbuf;
     rbuf.data = self->data_buf;
     rbuf.data_size = data_len;
-    rbuf.recv_utime = timestamp_now();
+    rbuf.recv_utime = g_get_real_time();
     rbuf.lcm = self->lcm;
 
     if (lcm_try_enqueue_message(self->lcm, self->recv_channel_buf))

@@ -10,7 +10,6 @@
 #include <unistd.h> /* _exit */
 #endif
 #include <inttypes.h>
-
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -38,11 +37,6 @@
         fprintf(f, __VA_ARGS__);          \
         fprintf(f, "\n");                 \
     } while (0)
-
-static inline int imax(int a, int b)
-{
-    return (a > b) ? a : b;
-}
 
 static char *dots_to_underscores(const char *s)
 {

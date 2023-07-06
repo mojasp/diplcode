@@ -2,6 +2,10 @@
 
 include(FindPackageHandleStandardArgs)
 
+# This is set because `find_package_handle_standard_args` is also used for each
+# component of GLib2, e.g., `GLib2_glid`, `GLib2_gio`, etc.
+set(FPHSA_NAME_MISMATCHED TRUE)
+
 #------------------------------------------------------------------------------
 function(_glib2_find_include VAR HEADER)
   list(APPEND CMAKE_PREFIX_PATH $ENV{GLIB_PATH})
@@ -45,7 +49,6 @@ function(_glib2_add_target TARGET LIBRARY)
   endforeach()
 
   find_package_handle_standard_args(GLib2_${TARGET}
-    FOUND_VAR GLib2_${TARGET}_FOUND
     REQUIRED_VARS ${_deps}
   )
 

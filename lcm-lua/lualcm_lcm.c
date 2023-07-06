@@ -1,4 +1,5 @@
 #include "lualcm_lcm.h"
+
 #include "lcm/lcm.h"
 #include "lua_ref_helper.h"
 #include "lua_ver_helper.h"
@@ -96,7 +97,9 @@ void ll_lcm_makemetatable(lua_State *L)
     }
 
     const struct luaL_Reg metas[] = {
-        {"__tostring", impl_lcm_tostring}, {"__gc", impl_lcm_gc}, {NULL, NULL},
+        {"__tostring", impl_lcm_tostring},
+        {"__gc", impl_lcm_gc},
+        {NULL, NULL},
     };
 
     /* register to meta */
@@ -118,11 +121,6 @@ void ll_lcm_makemetatable(lua_State *L)
     luaX_registertable(L, methods);
     lua_rawset(L, -3);
 
-    /* TODO hide metatable */
-    /*lua_pushstring(L, "__metatable");
-    lua_pushnil(L);
-    lua_rawset(L, -3);*/
-
     /* pop the metatable */
     lua_pop(L, 1);
 }
@@ -139,7 +137,8 @@ void ll_lcm_makemetatable(lua_State *L)
 void ll_lcm_register_new(lua_State *L)
 {
     const struct luaL_Reg new_function[] = {
-        {"new", impl_lcm_new}, {NULL, NULL},
+        {"new", impl_lcm_new},
+        {NULL, NULL},
     };
 
     luaX_registerglobal(L, "lcm.lcm", new_function);
@@ -567,7 +566,7 @@ static int impl_lcm_unsubscribe(lua_State *L)
     int ref_num = luaL_checkint(L, 2);
 
     /* get subscription table entry, this pushes the handler on the stack */
-    lcm_subscription_t *subscription;
+    lcm_subscription_t *subscription = NULL;
     if (!impl_lcm_removefromsubscriptiontable(L, 1, ref_num, &subscription)) {
         /* made up reference number */
         lua_pushstring(L, "subscription number invalid");

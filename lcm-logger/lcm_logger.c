@@ -1,25 +1,23 @@
 #include <assert.h>
 #include <errno.h>
 #include <getopt.h>
+#include <glib.h>
+#include <glib/gstdio.h>
+#include <lcm/lcm.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-#include <glib.h>
-#include <glib/gstdio.h>
-
-#include <lcm/lcm.h>
-
-// GRegex was new in GLib 2.14.0
-#if GLIB_CHECK_VERSION(2, 14, 0)
+// Several thread and synchronization API functions (e.g. g_mutex_init,
+// g_cond_init, g_thread_new, etc) require 2.32
+#if GLIB_CHECK_VERSION(2, 32, 0)
 #else
-#error "LCM requires a glib version >= 2.14.0"
+#error "LCM requires a glib version >= 2.32.0"
 #endif
 
 #ifdef WIN32
 #define __STDC_FORMAT_MACROS  // Enable integer types
-#include <lcm/windows/WinPorting.h>
 #else
 #include <unistd.h> /* fdatasync */
 #endif
@@ -45,13 +43,6 @@ static inline int64_t timestamp_seconds(int64_t v)
     return v / 1000000;
 }
 
-static inline int64_t timestamp_now(void)
-{
-    GTimeVal tv;
-    g_get_current_time(&tv);
-    return (int64_t) tv.tv_sec * 1000000 + tv.tv_usec;
-}
-
 typedef struct logger logger_t;
 struct logger {
     lcm_eventlog_t *log;
@@ -74,7 +65,7 @@ struct logger {
 
     GThread *write_thread;
     GAsyncQueue *write_queue;
-    GMutex *mutex;
+    GMutex mutex;
 
     // variables for inverted matching (e.g., logging all but some channels)
     int invert_channels;
@@ -147,12 +138,20 @@ static int open_logfile(logger_t *logger)
         /* Loop through possible file names until we find one that doesn't
          * already exist.  This way, we never overwrite an existing file. */
         do {
-            snprintf(logger->fname, sizeof(logger->fname), "%s.%02d", logger->fname_prefix,
-                     logger->next_increment_num);
+            int ret = snprintf(logger->fname, sizeof(logger->fname), "%s.%02d",
+                               logger->fname_prefix, logger->next_increment_num);
+            if (ret < 0) {
+                fprintf(stderr, "Error: failed to create filename string");
+                return 1;
+            }
             logger->next_increment_num++;
         } while (g_file_test(logger->fname, G_FILE_TEST_EXISTS));
     } else if (logger->rotate > 0) {
-        snprintf(logger->fname, sizeof(logger->fname), "%s.0", logger->fname_prefix);
+        int ret = snprintf(logger->fname, sizeof(logger->fname), "%s.0", logger->fname_prefix);
+        if (ret < 0) {
+            fprintf(stderr, "Error: failed to create filename string");
+            return 1;
+        }
     } else {
         strcpy(logger->fname, logger->fname_prefix);
         if (!(logger->force_overwrite || logger->append)) {
@@ -189,10 +188,6 @@ static void *write_thread(void *user_data)
 {
     logger_t *logger = (logger_t *) user_data;
 
-    GTimeVal start_time;
-    g_get_current_time(&start_time);
-    int num_splits = 0;
-
     while (1) {
         void *msg = g_async_queue_pop(logger->write_queue);
 
@@ -214,27 +209,26 @@ static void *write_thread(void *user_data)
                 rotate_logfiles(logger);
             if (0 != open_logfile(logger))
                 exit(1);
-            num_splits++;
             logger->logsize = 0;
             logger->last_report_logsize = 0;
         }
 
         // Should the write thread exit?
-        g_mutex_lock(logger->mutex);
+        g_mutex_lock(&logger->mutex);
         if (msg == &logger->write_thread_exit_flag) {
-            g_mutex_unlock(logger->mutex);
+            g_mutex_unlock(&logger->mutex);
             return NULL;
         }
         // nope.  write the event to disk
         lcm_eventlog_event_t *le = (lcm_eventlog_event_t *) msg;
         int64_t sz = sizeof(lcm_eventlog_event_t) + le->channellen + 1 + le->datalen;
         logger->write_queue_size -= sz;
-        g_mutex_unlock(logger->mutex);
+        g_mutex_unlock(&logger->mutex);
 
         if (0 != lcm_eventlog_write_event(logger->log, le)) {
             static int64_t last_spew_utime = 0;
             char *reason = strdup(strerror(errno));
-            int64_t now = timestamp_now();
+            int64_t now = g_get_real_time();
             if (now - last_spew_utime > 500000) {
                 fprintf(stderr, "lcm_eventlog_write_event: %s\n", reason);
                 last_spew_utime = now;
@@ -299,15 +293,15 @@ static void message_handler(const lcm_recv_buf_t *rbuf, const char *channel, voi
     // check if the backlog of unwritten messages is too big.  If so, then
     // ignore this event
     int64_t mem_sz = sizeof(lcm_eventlog_event_t) + channellen + 1 + rbuf->data_size;
-    g_mutex_lock(logger->mutex);
+    g_mutex_lock(&logger->mutex);
     int64_t mem_required = mem_sz + logger->write_queue_size;
 
     if (mem_required > logger->max_write_queue_size) {
         // can't write to logfile fast enough.  drop packet.
-        g_mutex_unlock(logger->mutex);
+        g_mutex_unlock(&logger->mutex);
 
         // maybe print an informational message to stdout
-        int64_t now = timestamp_now();
+        int64_t now = g_get_real_time();
         logger->dropped_packets_count++;
         int rc = logger->dropped_packets_count - logger->last_drop_report_count;
 
@@ -321,7 +315,7 @@ static void message_handler(const lcm_recv_buf_t *rbuf, const char *channel, voi
         return;
     } else {
         logger->write_queue_size = mem_required;
-        g_mutex_unlock(logger->mutex);
+        g_mutex_unlock(&logger->mutex);
     }
 
     // queue up the message for writing to disk by the write thread
@@ -535,18 +529,18 @@ int main(int argc, char *argv[])
         fprintf(stderr, "ERROR.  --force_overwrite and --append can't both be used\n");
     }
 
-    logger.time0 = timestamp_now();
-    logger.max_write_queue_size = (int64_t)(max_write_queue_size_mb * (1 << 20));
+    logger.time0 = g_get_real_time();
+    logger.max_write_queue_size = (int64_t) (max_write_queue_size_mb * (1 << 20));
 
     if (0 != open_logfile(&logger))
         return 1;
 
     // create write thread
     logger.write_thread_exit_flag = 0;
-    logger.mutex = g_mutex_new();
+    g_mutex_init(&logger.mutex);
     logger.write_queue_size = 0;
     logger.write_queue = g_async_queue_new();
-    logger.write_thread = g_thread_create(write_thread, &logger, TRUE, NULL);
+    logger.write_thread = g_thread_new(NULL, write_thread, &logger);
 
     // begin logging
     logger.lcm = lcm_create(lcmurl);
@@ -590,12 +584,12 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Logger exiting\n");
 
     // stop the write thread
-    g_mutex_lock(logger.mutex);
+    g_mutex_lock(&logger.mutex);
     logger.write_thread_exit_flag = 1;
-    g_mutex_unlock(logger.mutex);
+    g_mutex_unlock(&logger.mutex);
     g_async_queue_push(logger.write_queue, &logger.write_thread_exit_flag);
     g_thread_join(logger.write_thread);
-    g_mutex_free(logger.mutex);
+    g_mutex_clear(&logger.mutex);
 
     // cleanup.  This isn't strictly necessary, do it to be pedantic and so that
     // leak checkers don't complain
