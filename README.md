@@ -6,9 +6,19 @@ critical. It provides a publish/subscribe message passing model and automatic
 marshalling/unmarshalling code generation with bindings for applications in a
 variety of programming languages.
 
-This fork LCMsec is a security extensions for LCM. It adds confidentiality, integrity and authenticity to LCM messages while minimizing both overhead and computational complexity – as such, LCMsec is designed to be usable in most environments in which LCM is used. LCMsec employs a hybrid cryptosystem: a symmetric key is shared between all publishers and subscribers to a channel on a specific multicastgroup. There is no distinction between subscribers and publishers, each subscriber is also allowed to publish messages. An attribute-based access control mechanism (who is allowed to send on which channel and multicastgroups) is available through the use X.509 certificates that grant access only to specific LCMdomains. AES/GCM or ChaChaPoly1305 is available as the underlying authenticated encryption algorithm.
+This fork, LCMsec, is a security extensions for LCM. A brief overview of the design goals is provided here:
+* provide confidentiality, integrity and authenticity to LCM messages
+* aim to minimize both overhead and computational complexity - as such, LCMsec is designed to be usable in most environments in which LCM is used.
+* maintain the decentralized, peer-to-peer nature of LCM: no broker, no central instance to facilitate keyexchange
+* Scalable to many peers, capable of dealing with dynamic communication topologies (hosts leaving and joining a channel) efficiently
 
-LCMsec is maintains the decentralized, peer-to-peer nature of LCM: there is no need for a central server to broker messages, facilitate keyexchanges or discover peers. A discovery mechanism is instead built-in, which facilitates ease-of-use and flexibility. Despite the shared symmetric key, it should be noted that the protocol is scalable in dynamic situations with a high number of entities on a channel: Through use of the Dutta-Barua group key agreement (modified to use EC-Cryptography), the number of network interactions when a publisher or subscriber joins a topic (i.e., is turned on) is minimized.
+This is achieved with the use of:
+* a hybrid cryptosystem: a symmetric key is shared between all publishers and subscribers to a channel on a specific multicastgroup
+* No distinction between subscribers and publishers, each subscriber is also allowed to publish messages. This makes it possible to use a single shared symmetric key, and avoids issues typically associated with multicast authentication
+* An attribute-based access control mechanism (who is allowed to send on which channel and multicastgroups) through the use X.509 certificates
+* A built-in, decentralized discovery protocol
+* AES/GCM or ChaChaPoly1305 as the underlying authenticated encryption algorithm.
+* The Dutta-Barua group key agreement (modified to use EC-Cryptography) to agree on the symmetric key minimizes the number of network interactions when a publisher or subscriber joins a topic (i.e., is turned on)
 
 For more informations please refer to the paper we submitted, which will be provided here shortly.
 
@@ -28,9 +38,11 @@ For more informations please refer to the paper we submitted, which will be prov
     * for the permission to be part of a multicast group, use the special string "gkexchg_g" and omit the channelname, for instance: ` urn:lcmsec:gkexchg_g:239.255.76.67:7667:4`
 * use ```lcm_create_with_security(...) ``` (or use the c++ API in lcm-sec.hpp)
 to create an LCM instance that has security enabled. This call will block until the group key agreement has finished on all channels for which there are permissions in the certificate
-* call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (joining) are needed. If the groups are static after an initial key agreement, this is not needed.
-* An Example for an application using LCM-sec can be found in examples/cpp_security (compiling it requires the toml++ library, available as a git submodule). 
+* call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (joining) are needed. If the groups are static after an initial key agreement, this is not needed. Alternatively, you can use the configuration option "keyexchange_in_background" (refer to lcm.h)
+* At this point, just use the craeted lcm instance as you normally would.
 
+
+An Example for an application using LCM-sec can be found in examples/cpp_security (compiling it requires the toml++ library, available as a git submodule). 
 This is an example on how to create a certificate which provides "alice" with the permission to send on receive on "channel1" and "channel2" of multicastgroup 239.255.76.67 and port 7667:
 
 ```bash
