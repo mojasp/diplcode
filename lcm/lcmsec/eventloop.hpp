@@ -102,7 +102,6 @@ class eventloop {
 
     inline void handle_tasks()
     {
-        // ZoneScoped;
         // Handle next task if it is available
         auto now = std::chrono::high_resolution_clock::now();
         while (!tasks.empty() && now > tasks.front().first) {
@@ -195,6 +194,7 @@ class eventloop {
     inline void run(const volatile std::atomic_bool* signal_shutdown)
     {
         while (!signal_shutdown) {
+            printf("eventloop hello\n");
             handle_tasks();
             handle_lcm();
         }
