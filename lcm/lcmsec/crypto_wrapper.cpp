@@ -39,10 +39,9 @@ class channel_crypto_ctx {
 
     std::unique_ptr<KeyExchangeLCMHandler> keyExchangeManager;
 
-    Botan::secure_vector<uint8_t> salt{0};  // FIXME: think about the salt.
     uint16_t sender_id;
     std::optional<Botan::secure_vector<uint8_t>>
-        key;  // caching the key derivation to improve performance. This needs to be done in the
+        keymat;  // caching the key derivation to improve performance. This needs to be done in the
               // manager class when/if we want rekeying
 
     static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
@@ -81,20 +80,17 @@ class channel_crypto_ctx {
         }
 
         IV.resize(LCMCRYPTO_IVSIZE);
-        salt.resize(LCMCRYPTO_SESSION_NONCE_SIZE);
     }
 
     Botan::secure_vector<uint8_t> &get_decryption_IV(const uint32_t seqno, uint16_t sender_id)
     {
-        assert(LCMCRYPTO_IVSIZE == 12);  // necessary for hardcoded values in this function here
         IV.resize(LCMCRYPTO_IVSIZE);
-        assert(salt.size() == LCMCRYPTO_SESSION_NONCE_SIZE);
 
         auto data = &IV[0];
-        memcpy(data, &seqno, 4);
-        memcpy(data + 4, &sender_id, 2);
-        memcpy(data + 6, &salt[0], 6);
-
+        memcpy(data, &(*keymat)[0]+key_size, LCMCRYPTO_SALTSIZE); //salt is in the end of the keying material
+        memcpy(data + LCMCRYPTO_SALTSIZE, &sender_id, sizeof(sender_id));
+        memcpy(data + LCMCRYPTO_SALTSIZE+sizeof(sender_id), &seqno, sizeof(seqno));
+        memset(data + LCMCRYPTO_SALTSIZE+sizeof(sender_id)+sizeof(seqno), 0, 4); //zero last 4 bytes
         return IV;
     }
     Botan::secure_vector<uint8_t> &get_encryption_IV(const uint32_t seqno)
@@ -102,32 +98,32 @@ class channel_crypto_ctx {
         return get_decryption_IV(seqno, this->sender_id);
     }
 
+    void update_keymat() {
+        if (!keymat || keyExchangeManager->hasNewKey()){
+
+            keymat = keyExchangeManager->get_session_key(key_size + LCMCRYPTO_SALTSIZE);
+
+            if (is_group) {
+                cipher_stream.value()->set_key(&(keymat->operator[](0)), key_size);
+            } else{
+                cipher_aead_dec.value()->set_key(&(keymat->operator[](0)), key_size);
+                cipher_aead_enc.value()->set_key(&(keymat->operator[](0)), key_size);
+            }
+        }
+    }
+
     Botan::AEAD_Mode *get_dec()
     {
-        if (!key || keyExchangeManager->hasNewKey()){
-            key = keyExchangeManager->get_session_key(key_size);
-            cipher_aead_dec.value()->set_key(&(key->operator[](0)), key->size());
-            cipher_aead_enc.value()->set_key(&(key->operator[](0)), key->size());
-        }
         return cipher_aead_dec.value().get();
     }
 
     Botan::AEAD_Mode *get_enc()
     {
-        if (!key || keyExchangeManager->hasNewKey()){
-            key = keyExchangeManager->get_session_key(key_size);
-            cipher_aead_dec.value()->set_key(&(key->operator[](0)), key->size());
-            cipher_aead_enc.value()->set_key(&(key->operator[](0)), key->size());
-        }
         return cipher_aead_enc.value().get();
     }
 
     Botan::StreamCipher *get_stream()
     {
-        if (!key || keyExchangeManager->hasNewKey()){
-            key = keyExchangeManager->get_session_key(key_size);
-            cipher_stream.value()->set_key(&(key->operator[](0)), key->size());
-        }
         return cipher_stream.value().get();
     }
 
@@ -300,12 +296,13 @@ extern "C" int lcm_encrypt_message(lcm_security_ctx *ctx, const char *channelnam
                                    const uint8_t *ptext, size_t ptextsize, uint8_t **ctext)
 {
     auto crypto_ctx = ctx->get_crypto_ctx(channelname);
-
     if (!crypto_ctx) {
         fprintf(stderr, "Cannot encrypt message: no security context registered for channel %s\n",
                 channelname);
         return LCMCRYPTO_ENCRYPTION_ERROR;
     }
+
+    crypto_ctx->update_keymat();
 
     auto enc = crypto_ctx->get_enc();
 
@@ -337,6 +334,8 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx *ctx, const char *channelnam
         return LCMCRYPTO_DECRYPTION_ERROR;
     }
 
+    crypto_ctx->update_keymat();
+
     auto dec = crypto_ctx->get_dec();
 
     dec->set_associated_data((const uint8_t *) channelname,
@@ -366,6 +365,7 @@ extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, co
 {
     assert(ptextsize == ctextsize);
     auto crypto_ctx = ctx->group_ctx.get();
+    crypto_ctx->update_keymat();
 
     auto cipher = crypto_ctx->get_stream();
 
@@ -392,6 +392,8 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
                                        size_t ptextsize)
 {
     auto crypto_ctx = ctx->group_ctx.get();
+
+    crypto_ctx->update_keymat();
 
     auto cipher = crypto_ctx->get_stream();
 
