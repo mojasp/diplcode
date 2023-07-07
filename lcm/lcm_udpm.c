@@ -1461,7 +1461,7 @@ setup_recv_thread_fail:
     return -1;
 }
 
-lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
+lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params)
 {
 
     udpm_params_t params;
@@ -1481,7 +1481,7 @@ lcm_provider_t *lcm_udpm_create(lcm_t *parent, const char *network, const GHashT
     }
     else {
         fprintf(stderr, "Initializing LCM UDPM Provider with security enabled\n");
-        lcm->security_ctx = lcm_create_security_ctx(sec_params, param_len);
+        lcm->security_ctx = lcm_create_security_ctx(sec_params);
     }
 
     lcm->lcm = parent;

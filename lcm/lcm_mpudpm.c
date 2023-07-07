@@ -1641,7 +1641,7 @@ setup_recv_thread_fail:
     return -1;
 }
 
-lcm_provider_t *lcm_mpudpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
+lcm_provider_t *lcm_mpudpm_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params)
 {
     if(sec_params) {
         fprintf(stderr, "Security is not supported for LCM multiport updm Provider, Exiting...");

@@ -25,7 +25,7 @@ extern "C" {
 
 typedef struct _lcm_security_ctx lcm_security_ctx; //opaque type used for interoperability with c code
 
-lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters* params, size_t paramlen);
+lcm_security_ctx* lcm_create_security_ctx (lcm_security_parameters* params);
 
 void lcm_destroy_security_ctx (lcm_security_ctx* ctx);
 

@@ -499,7 +499,7 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
         }
 
         Py_BEGIN_ALLOW_THREADS;
-        lcm_obj->lcm = lcm_create_with_security(url, security_params, sz);
+        lcm_obj->lcm = lcm_create_with_security(url, security_params);
         Py_END_ALLOW_THREADS;
     }
 

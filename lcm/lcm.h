@@ -240,15 +240,9 @@ typedef struct {
  * Like lcm_create, but initializing security functionalities
  * If lcm_t is created with this function, subsequent publish and subscribe operations will be
  * secured
- *
- * sec_params shall be an array of length param_len containing the security parameters for the group
- * and each channel that will be used
- *
- * FIXME: mention document that explains details
  */
 LCM_EXPORT
-lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters *sec_params,
-                                size_t param_len);
+lcm_t *lcm_create_with_security(const char *provider, lcm_security_parameters *sec_params);
 
 /**
  * @brief Destructor

@@ -64,7 +64,7 @@ static void lcm_memq_destroy(lcm_memq_t *self)
     free(self);
 }
 
-static lcm_provider_t *lcm_memq_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
+static lcm_provider_t *lcm_memq_create(lcm_t *parent, const char *target, const GHashTable *args, lcm_security_parameters* sec_params)
 {
     if(sec_params) {
         fprintf(stderr, "Security is not supported for LCM memq Provider, Exiting...");

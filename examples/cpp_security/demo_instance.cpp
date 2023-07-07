@@ -169,8 +169,7 @@ int main(int argc, char **argv)
         group_params.keyexchange_in_background = true;
         sec_params.push_back(group_params);
 
-        lcm::LCM lcm(multicast_url.value<std::string>().value(), sec_params.data(),
-                     sec_params.size());
+        lcm::LCM lcm(multicast_url.value<std::string>().value(), sec_params.data());
         if (!lcm.good())
             return 1;
 

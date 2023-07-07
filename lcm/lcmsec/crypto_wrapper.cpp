@@ -160,9 +160,9 @@ class _lcm_security_ctx {
     std::vector<std::thread> keyagree_threads;
 
   public:
-    _lcm_security_ctx(lcm_security_parameters *params, size_t param_len)
+    _lcm_security_ctx(lcm_security_parameters *params)
     {
-        auto &param = *params;  // FIXME multiple instances
+        auto &param = *params;
         std::string algorithm;
         if (!param.algorithm)
             throw lcmsec_impl::lcmsec_exception(
@@ -274,10 +274,9 @@ class _lcm_security_ctx {
     }
 };
 
-extern "C" lcm_security_ctx *lcm_create_security_ctx(lcm_security_parameters *params,
-                                                     size_t param_len)
+extern "C" lcm_security_ctx *lcm_create_security_ctx(lcm_security_parameters *params)
 {
-    return new _lcm_security_ctx(params, param_len);
+    return new _lcm_security_ctx(params);
 }
 
 extern "C" int lcm_crypto_perform_keyexchange(lcm_security_ctx *ctx)

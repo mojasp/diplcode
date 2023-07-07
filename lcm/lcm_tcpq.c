@@ -177,7 +177,7 @@ fail:
     return -1;
 }
 
-static lcm_provider_t *lcm_tcpq_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params, size_t param_len)
+static lcm_provider_t *lcm_tcpq_create(lcm_t *parent, const char *network, const GHashTable *args, lcm_security_parameters* sec_params)
 {
 #ifndef WIN32
     signal(SIGPIPE, SIG_IGN);

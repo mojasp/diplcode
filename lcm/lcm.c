@@ -58,8 +58,7 @@ extern void lcm_memq_provider_init(GPtrArray *providers);
 
 
 static lcm_t* lcm_create_impl(const char* url, 
-                lcm_security_parameters *sec_params, //nullable if security is not desired
-                size_t param_len
+                lcm_security_parameters *sec_params//nullable if security is not desired
                 ) {
 #ifdef WIN32
     WSADATA wsd;
@@ -90,15 +89,9 @@ static lcm_t* lcm_create_impl(const char* url,
         url = getenv("LCM_DEFAULT_URL");
     if (!url || !strlen(url))
         url = LCM_DEFAULT_URL;
-    for(int i = 0; i < param_len; i++) {
-        if(!(sec_params+i)){
-            fprintf(stderr, "Error: LCMsec security parameter #%d is NULL\n", i);
-            return 0;
+    if(sec_params && sec_params->keyexchange_url == NULL){
+            sec_params->keyexchange_url = url;
         }
-        if(sec_params[i].keyexchange_url == NULL){
-            sec_params[i].keyexchange_url = url;
-        }
-    }
 
     if (0 != lcm_parse_url(url, &provider_str, &network, args)) {
         fprintf(stderr, "%s:%d -- invalid URL [%s]\n", __FILE__, __LINE__, url);
@@ -132,7 +125,7 @@ static lcm_t* lcm_create_impl(const char* url,
     g_rec_mutex_init(&lcm->mutex);
     g_rec_mutex_init(&lcm->handle_mutex);
 
-    lcm->provider = info->vtable->create(lcm, network, args, sec_params, param_len);
+    lcm->provider = info->vtable->create(lcm, network, args, sec_params);
     lcm->in_handle = 0;
 
     free(provider_str);
@@ -162,13 +155,13 @@ fail:
 
 lcm_t *lcm_create(const char *url)
 {
-    return lcm_create_impl(url, NULL, 0);
+    return lcm_create_impl(url, NULL);
 }
 
-lcm_t *lcm_create_with_security(const char *url, lcm_security_parameters* sec_params, size_t param_len) {
+lcm_t *lcm_create_with_security(const char *url, lcm_security_parameters* sec_params) {
     if(!sec_params)
         fprintf(stderr, "lcm_create security called with sec_params=NULL\n"); //we shouldnt allow to call this function with a nullptr accidentally; caller should call lcm_create if security is not desired
-    return lcm_create_impl(url, sec_params, param_len);
+    return lcm_create_impl(url, sec_params);
 }
 
 // free the array that we associate for each channel, and the key. Don't free
