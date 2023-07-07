@@ -275,19 +275,21 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
     //if this is the first packet, set some values
     char *channel = NULL;
     if (hdr->fragment_no == 0) {
-        char *channel_ctext = (char*) (hdr+1);
-        channel = malloc(lcmb->channel_size + 1); //FIXME leak
-        int channel_sz = hdr->channelname_length; //no hton needed -> uint8 type
+        const char *pkt_channel_str_ct = (char *) (hdr + 1);
+
         uint16_t sender_id = htons(hdr->sender_id);
         uint32_t seqno = htonl(hdr->msg_seqno);
-        lcm_decrypt_channelname(lcm->security_ctx, sender_id , seqno, channel_ctext, channel_sz+1, channel, channel_sz+1);
-        if (channel_sz > LCM_MAX_CHANNEL_NAME_LENGTH) {
+
+        lcmb->channel_size =
+            lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct,
+                                    sz - sizeof(lcm2_header_short_secured_t), &channel);
+        if (lcmb->channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
             dbg(DBG_LCM, "bad channel name length\n");
             lcm->udp_discarded_bad++;
             return 0;
         }
-        data_start += channel_sz + 1;
-        frag_size -= (channel_sz + 1);
+        data_start += lcmb->channel_size + 1;
+        frag_size -= (lcmb->channel_size + 1);
     }
 
     if(!fbuf){
@@ -559,20 +561,20 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 
     // shouldn't have to worry about buffer overflow here because we
     // zeroed out byte #65536, which is never written to by recv
-    const char *pkt_channel_str_ct = (char *) (hdr2 + 1); //TODO in place decryption
+    const char *pkt_channel_str_ct = (char *) (hdr2 + 1);
 
-    lcmb->channel_size = hdr2->channelname_length;
-
+    uint8_t *pkt_channel_str;
+    lcmb->channel_size =
+        lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct,
+                                sz - sizeof(lcm2_header_short_secured_t), &pkt_channel_str);
     if (lcmb->channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
         dbg(DBG_LCM, "bad channel name length\n");
         lcm->udp_discarded_bad++;
         return 0;
     }
-    char* pkt_channel_str = calloc(sizeof(char*), lcmb->channel_size + 1); //FIXME leak
-    lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct, lcmb->channel_size +1 , pkt_channel_str , lcmb->channel_size+1);
 
     // if the packet has no subscribers, drop the message now.
-    if (!lcm_try_enqueue_message(lcm->lcm, pkt_channel_str))
+    if (!lcm_try_enqueue_message(lcm->lcm, (char*) pkt_channel_str))
         return 0;
 
     int auth_result;
@@ -584,7 +586,7 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
 
     uint8_t* rptext_buf;
-    int rptext_sz = lcm_decrypt_message(lcm->security_ctx, pkt_channel_str, sender_id, seqno, (uint8_t*) lcmb->buf + lcmb->data_offset, lcmb->data_size, &rptext_buf);
+    int rptext_sz = lcm_decrypt_message(lcm->security_ctx, (char*) pkt_channel_str, sender_id, seqno, (uint8_t*) lcmb->buf + lcmb->data_offset, lcmb->data_size, &rptext_buf);
     if(rptext_sz == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
         CRYPTO_DBG("%s", "Could not authenticate packet, dropping...\n");
@@ -598,7 +600,7 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
     assert(rptext_sz >= 0);
     memcpy(lcmb->buf + lcmb->data_offset, rptext_buf, rptext_sz);
     lcmb->data_size = rptext_sz; 
-    strcpy(lcmb->channel_name, pkt_channel_str);
+    strcpy(lcmb->channel_name, (char*)pkt_channel_str);
 
     return 1;
 }
@@ -968,8 +970,8 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
         return -1;
     }
-    char* channel_ctext = malloc(channel_size+1);
-    lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, channel, channel_size+1, channel_ctext, channel_size+1);
+    uint8_t* channel_ctext;
+    lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, channel, channel_size+1, &channel_ctext);
 
     uint8_t *ctext;
     int ctextsize = lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (const uint8_t*) data, datalen, &ctext);
@@ -994,7 +996,6 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         lcm2_header_short_secured_t hdr;
         hdr.magic = htonl(LCM2_MAGIC_SHORT_SECURED);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
-        hdr.channelname_length = channel_size;
         hdr.sender_id = htons(get_sender_id_from_cryptoctx(lcm->security_ctx, channel)); 
 
         struct iovec sendbufs[3];
@@ -1053,7 +1054,6 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         hdr.magic = htonl(LCM2_MAGIC_LONG_SECURED);
         hdr.msg_seqno = htonl(lcm->msg_seqno);
         hdr.msg_size = htonl(ctextsize);
-        hdr.channelname_length = channel_size;
         hdr.sender_id = htons(get_sender_id_from_cryptoctx(lcm->security_ctx, channel)); 
         hdr.fragment_offset = 0;
         hdr.fragment_no = 0;

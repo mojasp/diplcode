@@ -77,7 +77,6 @@ typedef struct _lcm2_header_short_secured {
     uint32_t magic;
     uint32_t msg_seqno;
     uint16_t sender_id;
-    uint8_t  channelname_length;
 } lcm2_header_short_secured_t;
 
 
@@ -94,7 +93,6 @@ typedef struct _lcm2_header_long_secured {
     uint32_t msg_seqno;
     uint32_t msg_size;
     uint16_t sender_id;             
-    uint8_t  channelname_length;
     uint32_t fragment_offset;
     uint16_t fragment_no;
     uint16_t fragments_in_msg;

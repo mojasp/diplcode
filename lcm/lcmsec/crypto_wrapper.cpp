@@ -31,7 +31,7 @@ class channel_crypto_ctx {
     std::string algorithm_stream;
     int key_size;
 
-    //FIXME use subclass instead
+    // maybe use subclass instead
     bool is_group;
     std::optional<std::unique_ptr<Botan::AEAD_Mode>> cipher_aead_enc;
     std::optional<std::unique_ptr<Botan::AEAD_Mode>> cipher_aead_dec;
@@ -42,7 +42,7 @@ class channel_crypto_ctx {
     uint16_t sender_id;
     std::optional<Botan::secure_vector<uint8_t>>
         keymat;  // caching the key derivation to improve performance. This needs to be done in the
-              // manager class when/if we want rekeying
+                 // manager class when/if we want rekeying
 
     static constexpr int TAG_SIZE = LCMCRYPTO_TAGSIZE;
     static constexpr int KEY_SIZE_CHACHA = 32;  // ChaCha20Poly1305 key size.
@@ -87,10 +87,12 @@ class channel_crypto_ctx {
         IV.resize(LCMCRYPTO_IVSIZE);
 
         auto data = &IV[0];
-        memcpy(data, &(*keymat)[0]+key_size, LCMCRYPTO_SALTSIZE); //salt is in the end of the keying material
+        memcpy(data, &(*keymat)[0] + key_size,
+               LCMCRYPTO_SALTSIZE);  // salt is in the end of the keying material
         memcpy(data + LCMCRYPTO_SALTSIZE, &sender_id, sizeof(sender_id));
-        memcpy(data + LCMCRYPTO_SALTSIZE+sizeof(sender_id), &seqno, sizeof(seqno));
-        memset(data + LCMCRYPTO_SALTSIZE+sizeof(sender_id)+sizeof(seqno), 0, 4); //zero last 4 bytes
+        memcpy(data + LCMCRYPTO_SALTSIZE + sizeof(sender_id), &seqno, sizeof(seqno));
+        memset(data + LCMCRYPTO_SALTSIZE + sizeof(sender_id) + sizeof(seqno), 0,
+               4);  // zero last 4 bytes
         return IV;
     }
     Botan::secure_vector<uint8_t> &get_encryption_IV(const uint32_t seqno)
@@ -98,37 +100,29 @@ class channel_crypto_ctx {
         return get_decryption_IV(seqno, this->sender_id);
     }
 
-    void update_keymat() {
-        if (!keymat || keyExchangeManager->hasNewKey()){
-
+    void update_keymat()
+    {
+        if (!keymat || keyExchangeManager->hasNewKey()) {
             keymat = keyExchangeManager->get_session_key(key_size + LCMCRYPTO_SALTSIZE);
 
             if (is_group) {
                 cipher_stream.value()->set_key(&(keymat->operator[](0)), key_size);
-            } else{
+            } else {
                 cipher_aead_dec.value()->set_key(&(keymat->operator[](0)), key_size);
                 cipher_aead_enc.value()->set_key(&(keymat->operator[](0)), key_size);
             }
         }
     }
 
-    Botan::AEAD_Mode *get_dec()
-    {
-        return cipher_aead_dec.value().get();
-    }
+    Botan::AEAD_Mode *get_dec() { return cipher_aead_dec.value().get(); }
 
-    Botan::AEAD_Mode *get_enc()
-    {
-        return cipher_aead_enc.value().get();
-    }
+    Botan::AEAD_Mode *get_enc() { return cipher_aead_enc.value().get(); }
 
-    Botan::StreamCipher *get_stream()
-    {
-        return cipher_stream.value().get();
-    }
+    Botan::StreamCipher *get_stream() { return cipher_stream.value().get(); }
 
-    Botan::secure_vector<uint8_t>
-        crypto_buf;  // reduce number of allocations during encryption and decryption
+    // reduce number of allocations during encryption and decryption
+    Botan::secure_vector<uint8_t> message_crypto_buf;
+    Botan::secure_vector<uint8_t> channel_crypto_buf;
 };
 
 }  // namespace lcmsec_impl
@@ -156,7 +150,7 @@ class _lcm_security_ctx {
 
     std::unique_ptr<lcmsec_impl::eventloop> ev_loop;
 
-    std::atomic_bool signal_shutdown=false;
+    std::atomic_bool signal_shutdown = false;
     std::vector<std::thread> keyagree_threads;
 
   public:
@@ -248,9 +242,9 @@ class _lcm_security_ctx {
 
     ~_lcm_security_ctx()
     {
-        //end keyagree threads FIRST in case they access the memory we clear and free later
-        signal_shutdown=true;
-        for(std::thread& t : keyagree_threads){
+        // end keyagree threads FIRST in case they access the memory we clear and free later
+        signal_shutdown = true;
+        for (std::thread &t : keyagree_threads) {
             t.join();
         }
         for (auto it = channel_ctx_map.begin(); it != channel_ctx_map.end();) {
@@ -310,7 +304,7 @@ extern "C" int lcm_encrypt_message(lcm_security_ctx *ctx, const char *channelnam
     auto IV = crypto_ctx->get_encryption_IV(seqno);
     enc->start(IV);
 
-    auto &buf = crypto_ctx->crypto_buf;
+    auto &buf = crypto_ctx->message_crypto_buf;
     buf.resize(ptextsize);
     memcpy(buf.data(), ptext, ptextsize);
     enc->finish(buf);
@@ -343,7 +337,7 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx *ctx, const char *channelnam
     auto IV = crypto_ctx->get_decryption_IV(seqno, sender_id);
     try {
         dec->start(IV);
-        auto &buf = crypto_ctx->crypto_buf;
+        auto &buf = crypto_ctx->message_crypto_buf;
         buf.assign(ctext, ctext + ctextsize);
         dec->finish(buf);
 
@@ -360,9 +354,10 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx *ctx, const char *channelnam
 }
 
 extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, const char *ptext,
-                                       size_t ptextsize, char *ctext, size_t ctextsize)
+                                       size_t ptextsize, uint8_t **ctext)
 {
-    assert(ptextsize == ctextsize);
+    assert(ptextsize <= LCM_MAX_CHANNEL_NAME_LENGTH+1);
+
     auto crypto_ctx = ctx->group_ctx.get();
     crypto_ctx->update_keymat();
 
@@ -370,49 +365,53 @@ extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, co
 
     auto IV = crypto_ctx->get_encryption_IV(seqno);
     cipher->set_iv(&IV[0], IV.size());
-    Botan::secure_vector<uint8_t> ct(ptext, ptext + ptextsize);
-    cipher->encipher(ct);
-    // FIXME: stupid implementation for now, take advantage of in-place encryption later
-    // note: probably return an opaque ctext_buffer, that will be used later..
 
-    if (ctextsize < ct.size()) {
-        fprintf(stderr, "ctext buffer too small\n");
-        return LCMCRYPTO_ENCRYPTION_ERROR;
-    }
-    memcpy(ctext, ct.data(), ct.size());
+    crypto_ctx->channel_crypto_buf.resize(ptextsize);
+    std::memcpy(crypto_ctx->channel_crypto_buf.data(), ptext, ptextsize);
+    cipher->encipher(crypto_ctx->channel_crypto_buf);
 
+    *ctext = crypto_ctx->channel_crypto_buf.data();
     CRYPTO_DBG("encrypted channelname using %s with IV %s\n", cipher->name().c_str(),
                Botan::hex_encode(IV).c_str());
     return 0;
 }
 
+// decrypts channelname bytewise until finding null_terminater.
 extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id, uint32_t seqno,
-                                       const char *ctext, size_t ctextsize, char *ptext,
-                                       size_t ptextsize)
+                                       const char *ctext, size_t ctext_max_size, uint8_t** ptext)
 {
+
     auto crypto_ctx = ctx->group_ctx.get();
-
     crypto_ctx->update_keymat();
-
     auto cipher = crypto_ctx->get_stream();
-
     auto IV = crypto_ctx->get_decryption_IV(seqno, sender_id);
     cipher->set_iv(&IV[0], IV.size());
-    Botan::secure_vector<uint8_t> pt(ctext, ctext + ctextsize);
-    cipher->encipher(pt);
-    // FIXME: stupid implementation for now, take advantage of in-place encryption later
 
-    if (ptextsize < pt.size()) {
-        fprintf(stderr, "ptext buffer too small\n");
-        return LCMCRYPTO_DECRYPTION_ERROR;
+    // take an extra byte into account (LCM_MAX_CHANNEL_NAME_LENGTH is strlen, we need the amount of
+    // bytes that will hold it)
+    int max_sz = std::min<int>(ctext_max_size, LCM_MAX_CHANNEL_NAME_LENGTH + 1);
+    crypto_ctx->channel_crypto_buf.resize(max_sz);
+
+    int bytes_enciphered{0};
+    bool success{false};
+    do {
+        cipher->cipher(reinterpret_cast<const uint8_t*>(ctext+bytes_enciphered), crypto_ctx->channel_crypto_buf.data()+bytes_enciphered, 1);
+        if (crypto_ctx->channel_crypto_buf.data()[bytes_enciphered] == '\0') {
+            success = true;
+            break;
+        }
+        bytes_enciphered++;
+    } while (bytes_enciphered < max_sz);
+    if(!success){
+        CRYPTO_DBG("%s", "Error decrypting channelname: no null terminator\n");
+        return LCM_MAX_CHANNEL_NAME_LENGTH+1;
     }
 
-    memcpy(ptext, pt.data(), pt.size());
-
+    *ptext = crypto_ctx->channel_crypto_buf.data();
     CRYPTO_DBG("decrypted channelname %s using %s and IV = %s\n",
-               std::string(ptext, pt.size()).c_str(), cipher->name().c_str(),
+               std::string(*(char**)ptext, bytes_enciphered).c_str(), cipher->name().c_str(),
                Botan::hex_encode(IV).c_str());
-    return 0;
+    return bytes_enciphered;
 }
 
 extern "C" uint16_t get_sender_id_from_cryptoctx(lcm_security_ctx *ctx, const char *channelname)

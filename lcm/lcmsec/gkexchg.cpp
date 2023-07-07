@@ -793,7 +793,7 @@ Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_siz
     auto encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
     Botan::secure_vector<uint8_t> secure_encoded(
         encoded.data(),
-        encoded.data() + encoded.size());  // FIXME: this is stupid. can it even be fixed??!
+        encoded.data() + encoded.size());  // FIXME: unnessecary copy. can it even be fixed in Botan??!
 
     return kdf->derive_key(key_size, secure_encoded);
 }
