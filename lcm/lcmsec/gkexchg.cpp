@@ -142,6 +142,16 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
         return;
     }
 
+    // in case of nonexistent map key (fresh user), int default construtcs to 0 - works out since d
+    // starts at 1 for fresh user
+    if (msg->d <= session_id[msg->u]) {  // msg not valid: instance id not fresh
+        debug(std::string("instance id ") + std::to_string(msg->d) + " not fresh for user " +
+              std::to_string(msg->u) + ". must be larger than " +
+              std::to_string(session_id[msg->u]) + ". Dropping Dutta_Barua_message.");
+        return;
+        //Note that replaying a message of the current round possible, but it will not have an effect
+    }
+
     int remote_uid = managed_state.uid_to_protocol_uid(msg->u);
 
     if (role == JOIN_ROLE::passive) {
@@ -150,9 +160,11 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
             int right = 3;
             auto remote_proto_uid = managed_state.uid_to_protocol_uid(msg->u);
             if (remote_proto_uid == left)
-                r1_messages.left = *msg;
+                if(!r1_messages.left)
+                    r1_messages.left = *msg;
             if (remote_proto_uid == right)
-                r1_messages.right = *msg;
+                if(!r1_messages.right)
+                    r1_messages.right = *msg;
         } else {
             if (msg->round != 2) {
                 auto err = "lcmsec: keyexchange on channel " + groupexchg_channelname +
@@ -525,9 +537,8 @@ void Dutta_Barua_GKE::round1()
     debug(("------ starting Dutta_Barua_GKE with " +
            std::to_string(managed_state.active_participants()) + "participants ------- ")
               .c_str());
-    partial_session_id.push_back(
-        user_id{managed_state.uid_to_protocol_uid(uid.u),
-                uid.d});  // initialize the partial session id with the *protocol_user_id*
+    partial_session_id.clear();
+    partial_session_id[uid.u] = uid.d;
 
     Botan::PointGFp X;
     Botan::AutoSeeded_RNG rng;
@@ -643,8 +654,7 @@ void Dutta_Barua_GKE::computeKey()
 {
     TracyCZoneN(tracy_ctx, "computeKey_passive", 1);
     for (auto &[i, incoming] : r2_messages) {
-        partial_session_id.push_back(
-            user_id{managed_state.uid_to_protocol_uid(incoming.u), incoming.d});
+        partial_session_id[incoming.u] = incoming.d;
     }
     auto wrapindex = [sz = managed_state.active_participants()](int i) {
         return ((i - 1) % sz) + 1;  // wraparound respecting 1-indexing of dutta barua paper
@@ -689,6 +699,7 @@ void Dutta_Barua_GKE::computeKey()
     for (auto kr : right_keys) {
         *shared_secret += kr.second;
     }
+    session_id = partial_session_id;
 
     gkexchg_finished();
 }

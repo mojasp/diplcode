@@ -56,7 +56,8 @@ class Dutta_Barua_GKE {
 
     bool r2_finished = false;
 
-    std::vector<user_id> partial_session_id;
+    std::map<int, int> session_id; //map u to d
+    std::map<int, int> partial_session_id;
 
     std::optional<Botan::BigInt>
         x_i;  // no default constructor for DH_PrivateKey and it cannot be immediately initialized
