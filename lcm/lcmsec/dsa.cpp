@@ -8,6 +8,7 @@
 #include <botan/x509_key.h>
 #include <botan/x509cert.h>
 
+#include <chrono>
 #include <algorithm>
 
 #include "lcmsec/crypto_wrapper.h"
@@ -103,6 +104,13 @@ std::vector<capability> capability::from_certificate(Botan::X509_Certificate &ce
 
 const static std::string ecdsa_emca = "EMSA1(SHA-256)";
 
+bool timestamp_in_past(int64_t timestamp)
+{
+    auto now = std::chrono::high_resolution_clock::now();
+    if(now > std::chrono::high_resolution_clock::time_point{std::chrono::microseconds(timestamp)})
+        return true;
+    return false;
+}
 DSA_signer::DSA_signer(std::string keyfile)
     : key(std::unique_ptr<Botan::Private_Key>(Botan::PKCS8::load_key(keyfile, rng, "pwd")))
 {
@@ -265,12 +273,25 @@ class DSA_verifier::impl {
 
         return true;
     }
-    bool verify(const Dutta_Barua_JOIN *msg, std::string multicast_group, std::optional<std::string> channelname,
-                int uid)
+
+    bool verify(const Dutta_Barua_JOIN *msg, std::string multicast_group,
+                std::optional<std::string> channelname, int uid)
     {
         Botan::Public_Key *pkey = lookup_public_key(MOV(multicast_group), MOV(channelname), uid);
         if (!pkey)
             return false;
+
+        if(timestamp_in_past(msg->timestamp_r1start_us)) {
+            // random nonces or similar things not needed: A replay attack is not possible since msg
+            // carries a timestamp. Since JOINs are essentially an idempotent operation, replayed ones
+            // will be ignored.
+            //
+            // However, the timestamp should be checked to not in the past (since this idempotency is
+            // only guaranteed while the keyagreement is ongoing), a replay attack might lead to
+            // initiating a new KeyAgreement, ultimately (maybe) leading to DOS
+            CRYPTO_DBG("%s\n", "timestamp of JOIN in past - maybe a replay attack");
+            return false;
+        }
 
         Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
 
@@ -286,11 +307,31 @@ class DSA_verifier::impl {
     }
 
     bool verify(const Dutta_Barua_JOIN_response *msg, std::string multicast_group,
-                                std::optional<std::string> channelname, int uid) const
+                std::optional<std::string> channelname, int uid) const
     {
+        // random nonces or similar things not needed: A replay attack is not possible since msg
+        // carries a timestamp. Since JOIN_Reponses are essentially an idempotent operation for the
+        // duration of the keyagreement, replayed ones will be ignored.
+        //
+        // However, the timestamp should be checked to not in the past (since this idempotency is
+        // only guaranteed while the keyagreement is ongoing), a replay attack might otherwise
+        // attack might lead to initiating a new KeyAgreement, ultimately (maybe) leading to DOS
         Botan::Public_Key *pkey = lookup_public_key(MOV(multicast_group), MOV(channelname), uid);
         if (!pkey)
             return false;
+
+        if(timestamp_in_past(msg->timestamp_r1start_us)) {
+            // random nonces or similar things not needed: A replay attack is not possible since msg
+            // carries a timestamp. Since JOINs are essentially an idempotent operation, replayed ones
+            // will be ignored.
+            //
+            // However, the timestamp should be checked to not in the past (since this idempotency is
+            // only guaranteed while the keyagreement is ongoing), a replay attack might lead to
+            // initiating a new KeyAgreement, ultimately (maybe) leading to DOS
+            CRYPTO_DBG("%s\n", "timestamp of JOIN in past - maybe a replay attack");
+            return false;
+        }
+
 
         Botan::PK_Verifier verifier(*pkey, ecdsa_emca);
 
