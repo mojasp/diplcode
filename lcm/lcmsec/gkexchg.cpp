@@ -797,7 +797,7 @@ Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_siz
     // Converting vectors is not possible without copying, so we do this instead
     static const std::vector<uint8_t> empty;
 
-    return kdf->derive_key(key_size, encoded, empty, empty);
+    return kdf->derive_key(key_size, MOV(encoded), empty, empty);
 }
 
 KeyExchangeLCMHandler::KeyExchangeLCMHandler(capability cap, eventloop &ev_loop, lcm::LCM &lcm)
