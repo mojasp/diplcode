@@ -790,12 +790,14 @@ Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_siz
             ". Maybe the group key "
             "exchange algorithm was not successful\n");
     auto kdf = Botan::get_kdf("KDF2(SHA-256)");
-    auto encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
-    Botan::secure_vector<uint8_t> secure_encoded(
-        encoded.data(),
-        encoded.data() + encoded.size());  // FIXME: unnessecary copy. can it even be fixed in Botan??!
+    std::vector<uint8_t> encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
 
-    return kdf->derive_key(key_size, secure_encoded);
+    // set salt and label to empty vector. This is the same thing that the kdf->encode(size_t,
+    // Botan::secure_vector<uint8_t>) overload does, however, it cannot deal with an std::vector.
+    // Converting vectors is not possible without copying, so we do this instead
+    static const std::vector<uint8_t> empty;
+
+    return kdf->derive_key(key_size, encoded, empty, empty);
 }
 
 KeyExchangeLCMHandler::KeyExchangeLCMHandler(capability cap, eventloop &ev_loop, lcm::LCM &lcm)
