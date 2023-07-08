@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <atomic>
 
 #include "crypto_wrapper.h"
 #include "dsa.h"
@@ -71,7 +72,7 @@ class Dutta_Barua_GKE {
     } r1_messages;
 
     std::optional<Botan::PointGFp> shared_secret;
-    bool has_new_key;  // FIXME synchronization?
+    std::atomic_bool has_new_key;
 
     virtual void debug(std::string msg) = 0;
 
@@ -132,11 +133,8 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     inline bool hasNewKey()
     {
-        if (has_new_key) {
-            has_new_key = false;
-            return true;
-        }
-        return false;
+        bool expected = true;
+        return has_new_key.compare_exchange_strong(expected, false);
     }
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);

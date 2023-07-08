@@ -102,7 +102,20 @@ class channel_crypto_ctx {
 
     void update_keymat()
     {
-        if (!keymat || keyExchangeManager->hasNewKey()) {
+        // Multiple threads play a role here: for instance:
+        //  * hasNewKey flag is indicated by keyexchangemgr, which is exectued by the tasks in the
+        //  eventloop
+        //  * a recvthread may call it on incoming message to decrypt - this is always a thread
+        //  controlled by lcm, (*not* called by lcm.handle())
+        //  * a publish thread - controlled by the user
+        // as such, we need to avoid the race condition. However, this is acomplished by using
+        // compareexchange within the hasNewKey() function.
+        //
+        //  Note also that when this function is first called, there should always be an available
+        //  secret
+        //  - since a keyagreement is performed at startup (instance creation blocks until it is
+        //  done)
+        if (keyExchangeManager->hasNewKey()) {
             keymat = keyExchangeManager->get_session_key(key_size + LCMCRYPTO_SALTSIZE);
 
             if (is_group) {
