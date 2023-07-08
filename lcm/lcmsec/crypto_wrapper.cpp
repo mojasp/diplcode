@@ -60,7 +60,6 @@ class channel_crypto_ctx {
           algorithm_aead(MOV(_algorithm)),
           sender_id(sender_id),
           is_group(is_group)
-    // read sender_id from our own certificate FIXME -> urn parsing
     {
         if (algorithm_aead == "AES-128/GCM") {
             key_size = KEY_SIZE_AESGCM;
