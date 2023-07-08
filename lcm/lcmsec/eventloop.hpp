@@ -76,16 +76,16 @@ class eventloop {
         // listening might mean that we no longer have to send. dont be greedy!
         while (1) {
             auto now = std::chrono::high_resolution_clock::now();
-            auto next_task_delta = tasks.empty() ? default_poll_interval : tasks.front().first - now;
+            auto next_task_delta =
+                tasks.empty() ? default_poll_interval : tasks.front().first - now;
 
+            // ensure timeouts are not below 0
             struct timeval timeout = {
-                // FIXME: is this a bug in cases of timeouts over one seconds? => i think we need to
-                // truncate microseconds...
                 std::max<int64_t>(
                     std::chrono::duration_cast<std::chrono::seconds>(next_task_delta).count(), 0),
                 std::max<int64_t>(
                     std::chrono::duration_cast<std::chrono::microseconds>(next_task_delta).count(),
-            0)};  // ensure timeouts are not below 0
+                    0) % 1'000'000}; //trunacate microsecondcount in case it is larger than a second
 
             int lcm_fd = lcm.getFileno();
             fd_set fds;
@@ -107,7 +107,6 @@ class eventloop {
                 break;
             }
         }
-
     }
 
   public:
@@ -149,7 +148,7 @@ class eventloop {
     /*
      * run forever - useful for performing keyexchg in background
      */
-    inline void run(const volatile std::atomic_bool* signal_shutdown)
+    inline void run(const volatile std::atomic_bool *signal_shutdown)
     {
         while (!(*signal_shutdown)) {
             handle_tasks();
