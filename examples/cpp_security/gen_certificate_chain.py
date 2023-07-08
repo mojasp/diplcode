@@ -1,3 +1,20 @@
+# This script will generate a PKI with certificates that can be used with LCMsec.
+# Adapt to your liking. In this version, 10 nodes will be created, each of which will have the permission to send on group 239.255.76.67:7667 and "channel1"
+# All certificates will be placed in a newly-created "test_chain" directory
+# requires step-cli and openssl command line utilites
+
+
+# Essentially, this script is a wrapper around the following commands:
+
+# This is an example on how to create a certificate which provides "alice" with the permission to send on receive on "channel1" and "channel2" of multicastgroup 239.255.76.67 and port 7667:
+# ```bash
+#     step-cli certificate create alice alice.crt alice.key --san urn:lcmsec:gkexchg:239.255.76.67:7667:channel1:4 --san urn:lcmsec:gkexchg:239.255.76.67:7667:channel2:4 --san urn:lcmsec:gkexchg_g:239.255.76.67:7667:4   --profile leaf --ca ./root_ca.crt --ca-key ./root_ca.key
+#     # format in a way that botan can understand
+#     openssl pkcs8 -topk8 -in alice.key -out alice.pem
+#     mv alice.pem alice.key
+# ```
+
+
 import subprocess
 
 #foldername -needs to exist prior to using this script

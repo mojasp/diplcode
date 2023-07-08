@@ -32,25 +32,15 @@ For more informations please refer to the paper we submitted, which will be prov
 
 # LCMsec Quickstart guide
 
-* To use security features, you will need generate a root certificate and x509v3 certificate/key-pairs for each node that should communicate. Permissions are written into SAN of those certificates. An automated way to generate a PKI will follow shortly
+* To use security features, you will need generate a root certificate and x509v3 certificate/key-pairs for each node that should communicate. Permissions are written into SAN of those certificates. For a way to generate certificates automatically, refer to `examples/cpp_security/gen_certificates.py`
 * The format of the SAN is a URI of the form: `urn:lcmsec:gkexchg:<mcastgroup>:<port>:<channelname>:<user_id>` 
     * example: ` urn:lcmsec:gkexchg:239.255.76.67:7667:channel1:4` (for a channel)
     * for the permission to be part of a multicast group, use the special string "gkexchg_g" and omit the channelname, for instance: ` urn:lcmsec:gkexchg_g:239.255.76.67:7667:4`
-* use ```lcm_create_with_security(...) ``` (or use the c++ API in lcm-sec.hpp)
-to create an LCM instance that has security enabled. This call will block until the group key agreement has finished on all channels for which there are permissions in the certificate
+* use ```lcm_create_with_security(...) ``` (or use the c++ API in lcm-sec.hpp) to create an LCM instance that has security enabled. This call will block until the group key agreement has finished on all channels for which there are permissions in the certificate
 * call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (joining) are needed. If the groups are static after an initial key agreement, this is not needed. Alternatively, you can use the configuration option "keyexchange_in_background" (refer to lcm.h)
-* At this point, just use the craeted lcm instance as you normally would.
+* At this point, just use the created lcm instance as you normally would.
 
-
-An Example for an application using LCM-sec can be found in examples/cpp_security (compiling it requires the toml++ library, available as a git submodule). 
-This is an example on how to create a certificate which provides "alice" with the permission to send on receive on "channel1" and "channel2" of multicastgroup 239.255.76.67 and port 7667:
-
-```bash
-    step-cli certificate create alice alice.crt alice.key --san urn:lcmsec:gkexchg:239.255.76.67:7667:channel1:4 --san urn:lcmsec:gkexchg:239.255.76.67:7667:channel2:4 --san urn:lcmsec:gkexchg_g:239.255.76.67:7667:4   --profile leaf --ca ./root_ca.crt --ca-key ./root_ca.key
-    # format in a way that botan can understand
-    openssl pkcs8 -topk8 -in alice.key -out alice.pem
-    mv alice.pem alice.key
-```
+An Example for an application using LCM-sec can be found in `examples/cpp_security` folder.
 
 # Roadmap
 
