@@ -203,9 +203,8 @@ class _lcm_security_ctx {
 
         // Setup group key exchange for the channels for which we have capabilities
         auto capabilities = lcmsec_impl::capability::from_certificate(cert);
-        int channels =
-            capabilities.size();  // FIXME Counting by the number of channels is a bit of a hack -
-                                  // rather track by reference to the management instance
+        // Counting by the number of channels is a bit of a hack but i don't see any way it breaks.
+        int channels = capabilities.size();
         for (auto &cap : MOV(capabilities)) {
             std::string keyxchg_channel;
             if (cap.channelname == std::nullopt) {
@@ -216,8 +215,7 @@ class _lcm_security_ctx {
             }
             auto keyExchangeManager =
                 std::make_unique<lcmsec_impl::KeyExchangeLCMHandler>(cap, *ev_loop, *lcm);
-            // FIXME: this is way too hacky, use magic numbers probably or find prefixes that not as
-            // insane
+            // FIXME: this should be handled in a different way
             lcm->subscribe("lcm://" + keyxchg_channel,
                            &lcmsec_impl::KeyExchangeLCMHandler::handleMessage,
                            keyExchangeManager.get());
@@ -369,7 +367,7 @@ extern "C" int lcm_decrypt_message(lcm_security_ctx *ctx, const char *channelnam
 extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, const char *ptext,
                                        size_t ptextsize, uint8_t **ctext)
 {
-    assert(ptextsize <= LCM_MAX_CHANNEL_NAME_LENGTH+1);
+    assert(ptextsize <= LCM_MAX_CHANNEL_NAME_LENGTH + 1);
 
     auto crypto_ctx = ctx->group_ctx.get();
     crypto_ctx->update_keymat();
@@ -391,9 +389,8 @@ extern "C" int lcm_encrypt_channelname(lcm_security_ctx *ctx, uint32_t seqno, co
 
 // decrypts channelname bytewise until finding null_terminater.
 extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id, uint32_t seqno,
-                                       const char *ctext, size_t ctext_max_size, uint8_t** ptext)
+                                       const char *ctext, size_t ctext_max_size, uint8_t **ptext)
 {
-
     auto crypto_ctx = ctx->group_ctx.get();
     crypto_ctx->update_keymat();
     auto cipher = crypto_ctx->get_stream();
@@ -408,21 +405,22 @@ extern "C" int lcm_decrypt_channelname(lcm_security_ctx *ctx, uint16_t sender_id
     int bytes_enciphered{0};
     bool success{false};
     do {
-        cipher->cipher(reinterpret_cast<const uint8_t*>(ctext+bytes_enciphered), crypto_ctx->channel_crypto_buf.data()+bytes_enciphered, 1);
+        cipher->cipher(reinterpret_cast<const uint8_t *>(ctext + bytes_enciphered),
+                       crypto_ctx->channel_crypto_buf.data() + bytes_enciphered, 1);
         if (crypto_ctx->channel_crypto_buf.data()[bytes_enciphered] == '\0') {
             success = true;
             break;
         }
         bytes_enciphered++;
     } while (bytes_enciphered < max_sz);
-    if(!success){
+    if (!success) {
         CRYPTO_DBG("%s", "Error decrypting channelname: no null terminator\n");
-        return LCM_MAX_CHANNEL_NAME_LENGTH+1;
+        return LCM_MAX_CHANNEL_NAME_LENGTH + 1;
     }
 
     *ptext = crypto_ctx->channel_crypto_buf.data();
     CRYPTO_DBG("decrypted channelname %s using %s and IV = %s\n",
-               std::string(*(char**)ptext, bytes_enciphered).c_str(), cipher->name().c_str(),
+               std::string(*(char **) ptext, bytes_enciphered).c_str(), cipher->name().c_str(),
                Botan::hex_encode(IV).c_str());
     return bytes_enciphered;
 }
