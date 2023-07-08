@@ -970,28 +970,39 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         fprintf(stderr, "LCM Error: channel name too long [%s]\n", channel);
         return -1;
     }
-    uint8_t* channel_ctext;
-    lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, channel, channel_size+1, &channel_ctext);
+
+    // encryption needs to be synchronized as well, use the same transmit lock that lcm used.
+    // Finer-grained synchronization (on each AEAD-related function) would be possible as well.
+    // However, would require addtional allocations. This way, we don't need any allocations because
+    // we can always reuse the same buffer for channel and payload ctext.
+    //
+    // Note that on the corresponding receive functions, no such synchronization is needed: the
+    // receive functions are not called by any part of the public lcm API. it is only called by one
+    // internal lcm thread, which transmits the received and decrypted data into an internal buffer
+    // (access to which is indeed synchronized)
+    g_static_mutex_lock(&lcm->transmit_lock);
+
+    uint8_t *channel_ctext;
+    lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, channel, channel_size + 1,
+                            &channel_ctext);
 
     uint8_t *ctext;
     int ctextsize = lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (const uint8_t*) data, datalen, &ctext);
     if (ctextsize < 0) {
         CRYPTO_DBG("%s\n", "encryption failed!");
         fprintf(stderr, "LCM Error: encryption of message failed");
-        return -1;
+        goto fail;
     }
     if (ctextsize != datalen + LCMCRYPTO_TAGSIZE) {
         CRYPTO_DBG("%s\n", "unexpectect length of ctext");
         fprintf(stderr, "LCM Error: encryption of message failed");
-        return -1;
+        goto fail;
     }
 
     const int security_overhead = 4; // 3 extra bytes in header + alignment
     int payload_size = channel_size + 1 + ctextsize; //lcm_short_message_max_size is attuned to the unsecured headers
     if (payload_size <= LCM_SHORT_MESSAGE_MAX_SIZE - security_overhead) {
         // message is short.  send in a single packet
-
-        g_static_mutex_lock(&lcm->transmit_lock); //FIXME: lcm_crypto should probably use this lock as well, or synchronize in a different way
 
         lcm2_header_short_secured_t hdr;
         hdr.magic = htonl(LCM2_MAGIC_SHORT_SECURED);
@@ -1038,13 +1049,9 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
 
         if (nfragments > 65535) {
             fprintf(stderr, "LCM error: too much data for a single message\n");
-            return -1;
+            goto fail;
         }
 
-        // acquire transmit lock so that all fragments are transmitted
-        // together, and so that no other message uses the same sequence number
-        // (at least until the sequence # rolls over)
-        g_static_mutex_lock(&lcm->transmit_lock);
         dbg(DBG_LCM_MSG, "transmitting %d byte [%s] payload in %d fragments\n", payload_size,
             channel, nfragments);
 
@@ -1112,10 +1119,12 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         }
 
         lcm->msg_seqno++;
-        g_static_mutex_unlock(&lcm->transmit_lock);
     }
 
     return 0;
+fail:
+    g_static_mutex_unlock(&lcm->transmit_lock);
+    return -1;
 }
 
 static int lcm_udpm_publish(lcm_udpm_t *lcm, const char *channel, const void *data,
