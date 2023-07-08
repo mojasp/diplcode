@@ -182,7 +182,7 @@ lcm_buf_t *lcm_buf_allocate_data(lcm_buf_queue_t *inbufs_empty, lcm_ringbuf_t **
 
     // allocate space on the ringbuffer for the packet data.
     // give it the maximum possible size for an unfragmented packet
-    lcmb->buf = lcm_ringbuf_alloc(*ringbuf, LCM_MAX_UNFRAGMENTED_PACKET_SIZE + LCMCRYPTO_TAGSIZE); //FIXME is this correct?
+    lcmb->buf = lcm_ringbuf_alloc(*ringbuf, LCM_MAX_UNFRAGMENTED_PACKET_SIZE + LCMCRYPTO_TAGSIZE);
     if (lcmb->buf == NULL) {
         // ringbuffer is full.  allocate a larger ringbuffer
 
