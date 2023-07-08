@@ -25,7 +25,7 @@ For more informations please refer to the paper we submitted, which will be prov
 # Limitations of LCMsec
 
 * Additional dependencies are Botan and libstdc++.
-* Not yet adressed are the issues of rekeying and certificate revocation, which will be a next next step. 
+* Not yet adressed are the issues of rekeying and certificate revocation, which will be a next step. 
 * Only C, C++ and Python bindings are available, Python bindings have not been tested recently
 * lcm-logger and lcm-spy are not availe
 * Only the udpm provider is available
@@ -40,7 +40,7 @@ For more informations please refer to the paper we submitted, which will be prov
 * call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (joining) are needed. If the groups are static after an initial key agreement, this is not needed. Alternatively, you can use the configuration option "keyexchange_in_background" (refer to lcm.h)
 * At this point, just use the created lcm instance as you normally would.
 
-An Example for an application using LCM-sec can be found in `examples/cpp_security` folder.
+An Example for an application using LCMsec can be found in `examples/cpp_security` folder.
 
 # Roadmap
 
