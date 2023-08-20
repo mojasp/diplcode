@@ -282,7 +282,7 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
 
         lcmb->channel_size =
             lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct,
-                                    sz - sizeof(lcm2_header_short_secured_t), &channel);
+                                    sz - sizeof(lcm2_header_long_secured_t), &channel);
         if (lcmb->channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
             dbg(DBG_LCM, "bad channel name length\n");
             lcm->udp_discarded_bad++;
@@ -299,7 +299,7 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
     }
 
     if (channel!=NULL) {
-        strncpy (fbuf->channel, channel, sizeof (fbuf->channel));
+        strncpy (fbuf->channel, channel, lcmb->channel_size);
     }
     
 #ifdef __linux__
@@ -341,9 +341,9 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
         // yes, transfer the message into the lcm_buf_t
 
         // deallocate the ringbuffer-allocated buffer
-        g_static_rec_mutex_lock(&lcm->mutex);
+        g_rec_mutex_lock(&lcm->mutex);
         lcm_buf_free_data(lcmb, lcm->ringbuf);
-        g_static_rec_mutex_unlock(&lcm->mutex);
+        g_rec_mutex_unlock(&lcm->mutex);
 
         // transfer ownership of the message's payload buffer
         lcmb->buf = fbuf->data;
@@ -980,7 +980,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
     // receive functions are not called by any part of the public lcm API. it is only called by one
     // internal lcm thread, which transmits the received and decrypted data into an internal buffer
     // (access to which is indeed synchronized)
-    g_static_mutex_lock(&lcm->transmit_lock);
+    g_mutex_lock(&lcm->transmit_lock);
 
     uint8_t *channel_ctext;
     lcm_encrypt_channelname(lcm->security_ctx, lcm->msg_seqno, channel, channel_size + 1,
@@ -1034,7 +1034,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         int status = sendmsg(lcm->sendfd, &msg, 0);
 
         lcm->msg_seqno++;
-        g_static_mutex_unlock(&lcm->transmit_lock);
+        g_mutex_unlock(&lcm->transmit_lock);
 
         if (status == packet_size)
             return 0;
@@ -1119,11 +1119,12 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         }
 
         lcm->msg_seqno++;
+        g_mutex_unlock(&lcm->transmit_lock);
     }
 
     return 0;
 fail:
-    g_static_mutex_unlock(&lcm->transmit_lock);
+    g_mutex_unlock(&lcm->transmit_lock);
     return -1;
 }
 
