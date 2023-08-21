@@ -20,7 +20,7 @@ This is achieved with the use of:
 * AES/GCM or ChaChaPoly1305 as the underlying authenticated encryption algorithm.
 * The Dutta-Barua group key agreement (modified to use EC-Cryptography) to agree on the symmetric key while minimizing the number of network interactions when a publisher or subscriber joins a topic (i.e., is turned on)
 
-For more informations please refer to the [paper on LCMsec](https://arxiv.org/abs/2308.07095).
+For more informations please take a look at the [paper on LCMsec](https://arxiv.org/abs/2308.07095).
 
 # Limitations of LCMsec
 
