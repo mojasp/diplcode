@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "common.h"
+#include "lcmtest_primitives_t.h"
 
 #define info(...)             \
     do {                      \
@@ -81,8 +82,8 @@ TEST(LCM_C, EchoTest)
     secparams.algorithm= strdup("AES-128/GCM");
     secparams.keyexchange_in_background=1;
     secparams.keyexchange_url=strdup("udpm://239.255.76.67:7667");
-    secparams.certificate=strdup("test_chain/2.crt");
-    secparams.keyfile=strdup("test_chain/2.key");
+    secparams.certificate=strdup("test_chain/1.crt");
+    secparams.keyfile=strdup("test_chain/1.key");
     secparams.root_ca=strdup("test_chain/root_ca.crt"); 
 
     g_lcm = lcm_create_with_security("udpm://239.255.76.67:7667", &secparams);
@@ -147,5 +148,67 @@ TEST(LCM_C, cross_package)
 {
     ASSERT_TRUE(g_lcm != NULL);
     EXPECT_EQ(1, do_lcmtest2_cross_package_t_test());
+}
+
+static int g_lcmsec_cycle_test_got_messages [8];
+
+static void lcmsec_cycle_test_handler(const lcm_recv_buf_t *, const char *, const lcmtest_primitives_t *msg, void *userdata)
+{                                                                                         \
+    int *g_lcmsec_cycle_test_fail= (int*)userdata;
+    int id = msg->i8;
+
+    if (id < 1 || id > 9){
+        *g_lcmsec_cycle_test_fail = 1;
+        fprintf(stderr,"lcmsec_cycle_test: id out of bounds");
+        return;
+    }
+
+    //all fields should be the same
+    if(!check_lcmtest_primitives_t(msg, id)){
+        fprintf(stderr,"lcmsec_cycle_test: message ill-formed"); 
+        *g_lcmsec_cycle_test_fail = 1;
+    }
+
+    //sender of the message has the previous id
+    g_lcmsec_cycle_test_got_messages[id - 1] = 1;
+}                                                                                         
+
+TEST(LCM_C, lcmsec_cycle_test)
+{
+    ASSERT_TRUE(g_lcm != NULL);
+
+    for (int i = 1; i <= 8; i++) {
+        g_lcmsec_cycle_test_got_messages[i] = 0;
+    }
+    int g_lcmsec_cycle_test_fail = 0;
+
+    lcmtest_primitives_t msg;
+
+    //we are id 1; first recipient will be server 2
+    fill_lcmtest_primitives_t(2, &msg);
+
+    lcmtest_primitives_t_subscription_t *subs = lcmtest_primitives_t_subscribe(g_lcm, "test_lcmsec_cycle", lcmsec_cycle_test_handler, &g_lcmsec_cycle_test_fail);
+
+    lcmtest_primitives_t_publish(g_lcm, "test_lcmsec_cycle", &msg);
+
+    //we expect to see a total of 8 messages (including the one we published ourselves)
+    for (int i = 1; i <= 8 ; i++) {
+        info("lcmsec_cycle_test: handle it %i", i);                               \
+        if (!lcm_handle_timeout(g_lcm, 800)) {                                            \
+            info("lcmsec_cycle_test: Timeout waiting for reply for i=%i", i);                               \
+            g_lcmsec_cycle_test_fail = 1;
+        }
+    }
+
+    //Check that we indeed got all the messages (we need to check later since order is not defined)
+    info("message 1: %i", g_lcmsec_cycle_test_got_messages[1]);
+    for (int i = 2; i <= 8; i++) {
+        info("message %i: %i", i, g_lcmsec_cycle_test_got_messages[i]);
+        EXPECT_EQ(g_lcmsec_cycle_test_got_messages[i], 1); 
+    }
+
+    EXPECT_EQ(g_lcmsec_cycle_test_fail, 0);
+
+    lcmtest_primitives_t_unsubscribe(g_lcm, subs);
     lcm_destroy(g_lcm);
 }
