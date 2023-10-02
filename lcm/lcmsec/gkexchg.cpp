@@ -11,7 +11,6 @@
 #include <botan/pkix_types.h>
 #include <botan/point_gfp.h>
 #include <botan/pubkey.h>
-#include <tracy/TracyC.h>
 
 #include <algorithm>
 #include <chrono>
@@ -19,7 +18,6 @@
 #include <numeric>
 #include <iterator>
 #include <sstream>
-#include <tracy/Tracy.hpp>
 
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmexcept.hpp"
@@ -29,16 +27,6 @@
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 
 namespace lcmsec_impl {
-
-// assign tracy ctx in a way that doesn't break compilation when tracy is not enabled
-#ifdef TRACY_ENABLE
-#define TRACY_ASSIGN_CTX(to, from) \
-    do {                           \
-        to = from;                 \
-    } while (0)
-#else
-#define TRACY_ASSIGN_CTX(to, from) ;
-#endif
 
 #define LCMSEC_CHECKSTATE(...)        \
     do {                              \

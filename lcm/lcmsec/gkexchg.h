@@ -4,14 +4,12 @@
 #include <botan/bigint.h>
 #include <botan/dh.h>
 #include <botan/ecdh.h>
-#include <tracy/TracyC.h>
 
 #include <cassert>
 #include <map>
 #include <optional>
 #include <string>
 #include <vector>
-#include <atomic>
 
 #include "crypto_wrapper.h"
 #include "dsa.h"
@@ -22,7 +20,7 @@
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 #include "lcmsec/managed_state.hpp"
-#include "state.hpp"
+#include "lcmsec/tracy_stubs.hpp"
 
 namespace lcmsec_impl {
 
@@ -57,7 +55,7 @@ class Dutta_Barua_GKE {
 
     bool r2_finished = false;
 
-    std::map<int, int> session_id; //map u to d
+    std::map<int, int> session_id;  // map u to d
     std::map<int, int> partial_session_id;
 
     std::optional<Botan::BigInt>
@@ -72,7 +70,7 @@ class Dutta_Barua_GKE {
     } r1_messages;
 
     std::optional<Botan::PointGFp> shared_secret;
-    std::atomic_bool has_new_key;
+    bool has_new_key;  // FIXME synchronization?
 
     virtual void debug(std::string msg) = 0;
 
@@ -106,15 +104,13 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
   private:
     TracyCZoneCtx gkexchg_context;
 
-
-
   public:
     // Recovery management:
     //
     // Recall that the primary strategy we use to avoid raceconditions are idempotent tasks that are
-    // registered with our eventloop. This poses a challenge from the recovery standpoint (restarting
-    // the keyexchange after something goes wrong) - even after the cleanup, there still might be
-    // "old" tasks in our eventloop
+    // registered with our eventloop. This poses a challenge from the recovery standpoint
+    // (restarting the keyexchange after something goes wrong) - even after the cleanup, there still
+    // might be "old" tasks in our eventloop
     //
     // Solution:
     // Keep track of the current invocation count of our keyexchange. On Error, increase this count.
@@ -133,8 +129,11 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     inline bool hasNewKey()
     {
-        bool expected = true;
-        return has_new_key.compare_exchange_strong(expected, false);
+        if (has_new_key) {
+            has_new_key = false;
+            return true;
+        }
+        return false;
     }
 
     Botan::secure_vector<uint8_t> get_session_key(size_t key_size);

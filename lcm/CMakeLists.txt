@@ -63,22 +63,23 @@ add_library(lcm-coretypes INTERFACE)
 add_library(lcm-static STATIC ${lcm_sources})
 add_library(lcm SHARED ${lcm_sources})
 
+# Tracy has been used in lcmsec development for profiling, testing and as an instrumentation framework. It is disabled by default, but can be re-enabled with the USE_TRACY option
 if(USE_TRACY)
     option(TRACY_ENABLE "" ON)
     option(TRACY_FIBERS "" ON)
+#we always need the tracy header - will cause no runtime overhead if tracy is disabled
+    FetchContent_Declare(
+        tracy
+        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+        GIT_PROGRESS TRUE
+    )
+    FetchContent_MakeAvailable(tracy)
 else()
     #disable the tracy_enable macro otherwise we get linker error
     option(TRACY_ENABLE "" OFF)
 endif()
-#we always need the tracy header - will cause no runtime overhead if tracy is disabled
-FetchContent_Declare(
-    tracy
-    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-    GIT_TAG master
-    GIT_SHALLOW TRUE
-    GIT_PROGRESS TRUE
-)
-FetchContent_MakeAvailable(tracy)
 
 foreach(lcm_lib lcm lcm-static)
   target_compile_definitions(${lcm_lib} PRIVATE
@@ -107,8 +108,6 @@ foreach(lcm_lib lcm lcm-static)
 
   if(USE_TRACY)
       target_link_libraries(${lcm_lib} PRIVATE TracyClient)
-  else()
-      target_include_directories(${lcm_lib} PRIVATE ${tracy_SOURCE_DIR}/public) #we still need the tracy header
   endif()
 
   if(WIN32)

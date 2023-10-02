@@ -9,7 +9,6 @@
 #include <iostream>
 #include <list>
 #include <thread>
-#include <tracy/Tracy.hpp>
 
 #include "lcm-cpp.hpp"
 #include "lcmsec_util.h"
@@ -63,7 +62,6 @@ class eventloop {
         // Handle next task if it is available
         auto now = std::chrono::high_resolution_clock::now();
         while (!tasks.empty() && now > tasks.front().first) {
-            // ZoneNamedN(tracy_task, "eventloop task", true);
             auto t = tasks.front();
             t.second();
             tasks.pop_front();
