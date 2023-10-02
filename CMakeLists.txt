@@ -80,6 +80,14 @@ lcm_option(
   FALSE Go)
   #  GO_FOUND Go)
 
+# LCMsec
+option(LCMSEC_VERBOSE "Verbose lcmsec debug output" OFF)
+if(LCMSEC_VERBOSE)
+    add_compile_definitions(LCMSEC_DEBUG=1)
+else()
+    add_compile_definitions(LCMSEC_DEBUG=0)
+endif()
+
 option(LCM_ENABLE_TESTS "Build unit tests" ON)
 if(LCM_ENABLE_TESTS)
   enable_testing()

@@ -161,12 +161,11 @@ int main(int argc, char **argv)
         std::string cert = group1["cert"].value<std::string>().value();
         std::string root_ca = group1["root_ca"].value<std::string>().value();
 
-        lcm_security_parameters group_params;
+        lcm_security_parameters group_params{0};
         group_params.algorithm = algorithm.data();
         group_params.certificate = cert.data();
         group_params.keyfile = privkey.data();
         group_params.root_ca = root_ca.data();
-        group_params.keyexchange_in_background = true;
         sec_params.push_back(group_params);
 
         lcm::LCM lcm(multicast_url.value<std::string>().value(), sec_params.data());

@@ -201,7 +201,7 @@ typedef struct {
      * Possible options are:
          "AES-128/GCM"
          "ChaChaPoly1305"
-     * If NULL, "AES-128/GCM" will be used
+     * If NULL or empty, "AES-128/GCM" will be used as default.
      */
     char *algorithm;
 

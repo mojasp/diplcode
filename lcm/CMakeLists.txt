@@ -41,6 +41,12 @@ set(lcm_install_headers
   ${CMAKE_CURRENT_BINARY_DIR}/lcm_export.h
 )
 
+if(LCMSEC_VERBOSE)
+    add_compile_definitions(LCMSEC_DEBUG=1)
+else()
+    add_compile_definitions(LCMSEC_DEBUG=0)
+endif()
+
 if(WIN32)
   list(APPEND lcm_sources
     windows/WinLCM.cpp

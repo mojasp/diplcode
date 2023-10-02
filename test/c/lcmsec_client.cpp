@@ -205,3 +205,26 @@ TEST(LCMSEC_C, lcmsec_cycle_test)
     lcmtest_primitives_t_unsubscribe(g_lcm, subs);
     lcm_destroy(g_lcm);
 }
+
+TEST(LCMSEC_C, API_default_algorithm_test){
+    lcm_security_parameters secparams={0};
+
+    char key[100];
+    char cert[100];
+
+    snprintf(cert, sizeof(cert), "%s%d%s", "test_chain/", 1, ".crt");
+    printf("cert: %s\n", cert);
+    secparams.certificate = cert;
+    snprintf(key, sizeof(key), "%s%d%s", "test_chain/", 1, ".key");
+    printf("key: %s\n", key);
+    secparams.keyfile = key;
+
+    secparams.algorithm = NULL; //should default to aesgcm and work
+
+    secparams.root_ca = strdup("test_chain/root_ca.crt");
+
+    lcm_t* lcm = lcm_create_with_security("udpm://239.255.76.67:7667", &secparams);
+    ASSERT_TRUE(lcm != NULL);
+
+    lcm_destroy(lcm);
+}

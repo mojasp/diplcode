@@ -31,7 +31,7 @@ if(Python_EXECUTABLE)
     $<TARGET_FILE:test-c-server>
     $<TARGET_FILE:test-c-client>)
 
-    add_test(NAME C::LCMSEC COMMAND
+    add_test(NAME C::LCMsec COMMAND
     ${Python_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/../lcmsec_run_client_server_test.py
     $<TARGET_FILE:test-lcmsec-server>

@@ -168,12 +168,11 @@ class _lcm_security_ctx {
   public:
     _lcm_security_ctx(lcm_security_parameters *params)
     {
-        auto &param = *params;
         std::string algorithm;
-        if (!param.algorithm)
-            throw lcmsec_impl::lcmsec_exception(
-                "lcm_security_parameters.algorithm may not be NULL");
-        algorithm = std::string(param.algorithm);
+        if(params->algorithm==NULL)
+            algorithm = std::string("AES-128/GCM");
+        else
+            algorithm = params->algorithm;
         if (algorithm == "")
             algorithm = std::string("AES-128/GCM");
         else if (!(algorithm == "AES-128/GCM" || algorithm == "ChaCha20Poly1305")) {
@@ -181,7 +180,7 @@ class _lcm_security_ctx {
                                                 "') in lcm_security_parameters");
         }
 
-        lcm = std::make_unique<lcm::LCM>(param.keyexchange_url);
+        lcm = std::make_unique<lcm::LCM>(params->keyexchange_url);
         if (!lcm->good()) {
             throw std::runtime_error("lcm instance for keyagreemend: creation failed");
         }
@@ -190,14 +189,14 @@ class _lcm_security_ctx {
 
         // Usage of constant singleton classes to get global access to the private key and
         // certificates in the future - this should probably be changed to something more robust
-        lcmsec_impl::DSA_signer::getInst(param.keyfile);
-        lcmsec_impl::DSA_verifier::getInst(param.root_ca);
-        lcmsec_impl::DSA_certificate_self::getInst(param.certificate);
+        lcmsec_impl::DSA_signer::getInst(params->keyfile);
+        lcmsec_impl::DSA_verifier::getInst(params->root_ca);
+        lcmsec_impl::DSA_certificate_self::getInst(params->certificate);
 
         // Parse our own certificate file to register the proper channels
         //  NOTE: it is probably a good idea to eventually register the channels in a lazy way (upon
         //  subscribe or join()?) - or give the user a choice which channels shall be registered
-        std::string cert_file = param.certificate;
+        std::string cert_file = params->certificate;
         Botan::X509_Certificate cert(cert_file);
 
         // Setup group key exchange for the channels for which we have capabilities
