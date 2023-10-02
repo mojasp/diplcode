@@ -3,13 +3,13 @@ set(test_c_libs lcm-test-types-c lcm gtest gtest_main)
 add_executable(test-c-server server.c common.c)
 target_link_libraries(test-c-server lcm-test-types-c lcm)
 
-add_executable(test-lscmsec-server lcmsec_server.c common.c)
-target_link_libraries(test-lscmsec-server lcm-test-types-c lcm)
+add_executable(test-lcmsec-server lcmsec_server.c common.c lcmsec_common.c)
+target_link_libraries(test-lcmsec-server lcm-test-types-c lcm)
 
 add_executable(test-c-client client.cpp common.c)
 target_link_libraries(test-c-client ${test_c_libs})
 
-add_executable(test-lcmsec-client lcmsec_client.cpp common.c)
+add_executable(test-lcmsec-client lcmsec_client.cpp common.c lcmsec_common.c)
 target_link_libraries(test-lcmsec-client ${test_c_libs})
 
 add_executable(test-c-memq_test memq_test.cpp common.c)
@@ -31,9 +31,9 @@ if(Python_EXECUTABLE)
     $<TARGET_FILE:test-c-server>
     $<TARGET_FILE:test-c-client>)
 
-  add_test(NAME LCMSEC::client_server COMMAND
+    add_test(NAME C::LCMSEC COMMAND
     ${Python_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/../lcmsec_run_client_server_test.py
-    $<TARGET_FILE:test-lscmsec-server>
+    $<TARGET_FILE:test-lcmsec-server>
     $<TARGET_FILE:test-lcmsec-client>)
 endif()

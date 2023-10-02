@@ -85,11 +85,25 @@ def lcmsec_gen_certificates():
 def main(server, *client):
     lcmsec_gen_certificates()
 
-    print("LCMSEC TEST HELLO")
     server_procs = []
-    # Start the test servers
-    for i in range(2, 9):
-        # Start both the server for client/server and roundtrip cycle tests
+    # Start the 7 test servers
+
+    # In order to test forming a dynamic group, we first start 2 Servers and wait until they have successfully agreed upon a key.
+    # Subsequently we start one more server, in order to hit the code path for small groups (with <= 3 participants the key will be recomputed instead of using the dynamic dutta-barua protocol)
+    # After that we start the rest of the servers, wait until they have agreed upon a key.
+    # Lastly we start the client server.
+
+    for i in range(2, 4):
+        print("Starting test server with id " + str(i))
+        p = subprocess.Popen([server, str(i)])
+        server_procs.append(p)
+    time.sleep(1)
+    for i in range(4, 5):
+        print("Starting test server with id " + str(i))
+        p = subprocess.Popen([server, str(i)])
+        server_procs.append(p)
+    time.sleep(1)
+    for i in range(5, 9):
         print("Starting test server with id " + str(i))
         p = subprocess.Popen([server, str(i)])
         server_procs.append(p)

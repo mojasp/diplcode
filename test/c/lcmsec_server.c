@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "common.h"
+#include "lcmsec_common.h"
 
 static lcm_t *g_lcm = NULL;
 static int g_quit = 0;
@@ -130,24 +131,8 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    lcm_security_parameters secparams;
-    secparams.algorithm = strdup("AES-128/GCM");
-    secparams.keyexchange_in_background = 1;
-    secparams.keyexchange_url = strdup("udpm://239.255.76.67:7667");
+    g_lcm = lcmsec_setup(g_lcmsec_cycle_test_id);
 
-    char cert[100];
-    snprintf(cert, sizeof(cert), "%s%s%s", "test_chain/", argv[1], ".crt");
-    printf("cert: %s\n", cert);
-    secparams.certificate = cert;
-
-    char key[100];
-    snprintf(key, sizeof(key), "%s%s%s", "test_chain/", argv[1], ".key");
-    printf("key: %s\n", key);
-    secparams.keyfile = key;
-
-    secparams.root_ca = strdup("test_chain/root_ca.crt");
-
-    g_lcm = lcm_create_with_security("udpm://239.255.76.67:7667", &secparams);
     if (!g_lcm)
         return 1;
 

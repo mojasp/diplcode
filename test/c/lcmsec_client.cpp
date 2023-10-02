@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "common.h"
+#include "lcmsec_common.h"
 #include "lcmtest_primitives_t.h"
 
 #define info(...)             \
@@ -74,19 +75,11 @@ static void echo_handler(const lcm_recv_buf_t *rbuf, const char *, void *)
     g_echo_response_count++;
 }
 
-TEST(LCM_C, EchoTest)
+TEST(LCMSEC_C, EchoTest)
 {
     srand(time(NULL));
 
-    lcm_security_parameters secparams;
-    secparams.algorithm= strdup("AES-128/GCM");
-    secparams.keyexchange_in_background=1;
-    secparams.keyexchange_url=strdup("udpm://239.255.76.67:7667");
-    secparams.certificate=strdup("test_chain/1.crt");
-    secparams.keyfile=strdup("test_chain/1.key");
-    secparams.root_ca=strdup("test_chain/root_ca.crt"); 
-
-    g_lcm = lcm_create_with_security("udpm://239.255.76.67:7667", &secparams);
+    g_lcm = lcmsec_setup(1);
     ASSERT_TRUE(g_lcm != NULL);
 
     int maxlen = 10000;
@@ -120,31 +113,31 @@ TEST(LCM_C, EchoTest)
 }
 
 // Typed tests
-TEST(LCM_C, primitives_t)
+TEST(LCMSEC_C, primitives_t)
 {
     ASSERT_TRUE(g_lcm != NULL);
     EXPECT_EQ(1, do_lcmtest_primitives_t_test());
 }
 
-TEST(LCM_C, primitives_list_t)
+TEST(LCMSEC_C, primitives_list_t)
 {
     ASSERT_TRUE(g_lcm != NULL);
     EXPECT_EQ(1, do_lcmtest_primitives_list_t_test());
 }
 
-TEST(LCM_C, node_t)
+TEST(LCMSEC_C, node_t)
 {
     ASSERT_TRUE(g_lcm != NULL);
     EXPECT_EQ(1, do_lcmtest_node_t_test());
 }
 
-TEST(LCM_C, multidim_array_t)
+TEST(LCMSEC_C, multidim_array_t)
 {
     ASSERT_TRUE(g_lcm != NULL);
     EXPECT_EQ(1, do_lcmtest_multidim_array_t_test());
 }
 
-TEST(LCM_C, cross_package)
+TEST(LCMSEC_C, cross_package)
 {
     ASSERT_TRUE(g_lcm != NULL);
     EXPECT_EQ(1, do_lcmtest2_cross_package_t_test());
@@ -171,9 +164,9 @@ static void lcmsec_cycle_test_handler(const lcm_recv_buf_t *, const char *, cons
 
     //sender of the message has the previous id
     g_lcmsec_cycle_test_got_messages[id - 1] = 1;
-}                                                                                         
+}
 
-TEST(LCM_C, lcmsec_cycle_test)
+TEST(LCMSEC_C, lcmsec_cycle_test)
 {
     ASSERT_TRUE(g_lcm != NULL);
 
