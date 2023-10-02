@@ -31,8 +31,6 @@
 
 #include <glib.h>
 
-#include "lcmsec/crypto_wrapper.h"
-
 #include "dbg.h"
 #include "lcm.h"
 #include "lcm_internal.h"
@@ -239,7 +237,6 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
     if(!lcm->security_ctx){
         return 0;
     }
-    CRYPTO_DBG("%s\n", "receiving secured fragmented message");
     lcm2_header_long_secured_t *hdr = (lcm2_header_long_secured_t *) lcmb->buf;
 
     uint32_t msg_seqno = ntohl(hdr->msg_seqno);
@@ -298,10 +295,10 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
         lcm_frag_buf_store_add(lcm->frag_bufs, fbuf);
     }
 
+
     if (channel!=NULL) {
         strncpy (fbuf->channel, channel, lcmb->channel_size);
     }
-    
 #ifdef __linux__
     if (lcm->kernel_rbuf_sz < 262145 && data_size > lcm->kernel_rbuf_sz &&
         !lcm->warned_about_small_kernel_buf) {
@@ -359,18 +356,17 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
         uint16_t sender_id = htons(hdr->sender_id);
         uint32_t seqno = htonl(hdr->msg_seqno);
 
-        CRYPTO_DBG("recvd long msg with sender_id %u, seqno %u\n", sender_id, seqno);
-
         uint8_t *rptext;
         int rptext_sz = lcm_decrypt_message(lcm->security_ctx, fbuf->channel, sender_id, seqno, (uint8_t*) lcmb->buf + lcmb->data_offset, lcmb->data_size, &rptext);
+
         if(rptext_sz == LCMCRYPTO_INVALID_AUTH_TAG) {
             //authentication failed
-            CRYPTO_DBG("%s", "Could not authenticate packet, dropping...\n");
+            dbg(DBG_LCM, "Could not authenticate packet, dropping message...\n");
             return 0; //for some reason lcm returns 0 on error, 1 on success internally
         }
         if(rptext_sz == LCMCRYPTO_DECRYPTION_ERROR) {
             //authentication failed
-            CRYPTO_DBG("%s", "Error decrypting packet, dropping\n");
+            dbg(DBG_LCM, "Error decrypting packet, dropping message\n");
             return 0; //for some reason lcm returns 0 on error, 1 on success internally
         }
 
@@ -583,18 +579,16 @@ static int _recv_short_message_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, int sz)
 
     lcmb->data_size = sz - lcmb->data_offset;
 
-    CRYPTO_DBG("recvd msg with sender_id %u, seqno %u\n", sender_id, seqno);
-
     uint8_t* rptext_buf;
     int rptext_sz = lcm_decrypt_message(lcm->security_ctx, (char*) pkt_channel_str, sender_id, seqno, (uint8_t*) lcmb->buf + lcmb->data_offset, lcmb->data_size, &rptext_buf);
     if(rptext_sz == LCMCRYPTO_INVALID_AUTH_TAG) {
         //authentication failed
-        CRYPTO_DBG("%s", "Could not authenticate packet, dropping...\n");
+        dbg(DBG_LCM, "Could not authenticate packet, dropping...\n");
         return 0; //for some reason lcm returns 0 on error, 1 on success internally
     }
     if(rptext_sz == LCMCRYPTO_DECRYPTION_ERROR) {
         //authentication failed
-        CRYPTO_DBG("%s", "Error decrypting packet, dropping\n");
+        dbg(DBG_LCM, "Error decrypting packet, dropping\n");
         return 0; //for some reason lcm returns 0 on error, 1 on success internally
     }
     assert(rptext_sz >= 0);
@@ -962,7 +956,7 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
 
     int is_self_test = strncmp(channel, "LCM_SELF_TEST", LCM_MAX_CHANNEL_NAME_LENGTH) == 0;
     if(is_self_test) {
-        CRYPTO_DBG("%s\n", "use unencrypted publish for self-test");
+        dbg(DBG_LCM, "use unencrypted publish for self-test");
         return lcm_udpm_publish_insecure(lcm, channel, data, datalen);
     }
     uint8_t channel_size = strnlen(channel, LCM_MAX_CHANNEL_NAME_LENGTH + 1);
@@ -989,13 +983,11 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
     uint8_t *ctext;
     int ctextsize = lcm_encrypt_message(lcm->security_ctx, channel, lcm->msg_seqno, (const uint8_t*) data, datalen, &ctext);
     if (ctextsize < 0) {
-        CRYPTO_DBG("%s\n", "encryption failed!");
         fprintf(stderr, "LCM Error: encryption of message failed");
         goto fail;
     }
     if (ctextsize != datalen + LCMCRYPTO_TAGSIZE) {
-        CRYPTO_DBG("%s\n", "unexpectect length of ctext");
-        fprintf(stderr, "LCM Error: encryption of message failed");
+        fprintf(stderr, "LCMsec Error: encryption of message failed");
         goto fail;
     }
 
@@ -1041,7 +1033,6 @@ static int lcm_udpm_publish_secure(lcm_udpm_t *lcm, const char *channel, const v
         else
             return status;
     } else {
-        CRYPTO_DBG("%s\n", "sending fragmented message");
         // message is large.  fragment into multiple packets
 
         int fragment_size = LCM_FRAGMENT_MAX_PAYLOAD - security_overhead; //added 3 bytes of overhead to the header due to security header
