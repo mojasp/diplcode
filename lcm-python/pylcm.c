@@ -353,21 +353,9 @@ error occurs.\n\
 @return 0 if the function timed out, >1 if a message was handled.\n\
 ");
 
-static PyObject *pylcm_perform_keyexchange(PyLCMObject *lcm_obj)
-{
-    dbg(DBG_PYTHON, "%s %p\n", __FUNCTION__, lcm_obj);
-    return PyInt_FromLong(lcm_perform_keyexchange(lcm_obj->lcm));
-}
-PyDoc_STRVAR(pylcm_perform_keyexchange_doc,
-             "\
-performs the lcm-sec group key agreement in the background\
-");
-
 static PyMethodDef pylcm_methods[] = {
     {"handle", (PyCFunction) pylcm_handle, METH_NOARGS, pylcm_handle_doc},
     {"handle_timeout", (PyCFunction) pylcm_handle_timeout, METH_O, pylcm_handle_timeout_doc},
-    {"perform_keyexchange", (PyCFunction) pylcm_perform_keyexchange, METH_NOARGS,
-     pylcm_perform_keyexchange_doc},
     {"subscribe", (PyCFunction) pylcm_subscribe, METH_VARARGS, pylcm_subscribe_doc},
     {"unsubscribe", (PyCFunction) pylcm_unsubscribe, METH_VARARGS, pylcm_unsubscribe_doc},
     {"publish", (PyCFunction) pylcm_publish, METH_VARARGS, pylcm_publish_doc},
@@ -447,18 +435,6 @@ static int pylcm_initobj(PyObject *self, PyObject *args, PyObject *kwargs)
             if (!tuple)
                 goto error;
             if (!PyArg_ParseTuple(tuple, "s", &(security_params[i].algorithm)))
-                goto error;
-
-            item = PyDict_GetItemString(dict, "keyexchange_in_background");
-            if (!item) {
-                goto error;
-                PyErr_SetString(PyExc_RuntimeError,
-                                "lcmsec: expected keyexchange_in_background field in security parameters");
-            }
-            tuple = Py_BuildValue("(O)", item);
-            if (!tuple)
-                goto error;
-            if (!PyArg_ParseTuple(tuple, "p", &(security_params[i].keyexchange_in_background)))
                 goto error;
 
             item = PyDict_GetItemString(dict, "certificate");

@@ -37,7 +37,6 @@ For more informations please take a look at the [paper on LCMsec](https://arxiv.
     * example: ` urn:lcmsec:gkexchg:239.255.76.67:7667:channel1:4` (for a channel)
     * for the permission to be part of a multicast group, use the special string "gkexchg_g" and omit the channelname, for instance: ` urn:lcmsec:gkexchg_g:239.255.76.67:7667:4`
 * use ```lcm_create_with_security(...) ``` (or use the c++ API in lcm-sec.hpp) to create an LCM instance that has security enabled. This call will block until the group key agreement has finished on all channels for which there are permissions in the certificate
-* call ```lcm_perform_keyexchange(lcm_t *lcm) ``` in a separate thread if the dynamic properties of the protocol (joining) are needed. If the groups are static after an initial key agreement, this is not needed. Alternatively, you can use the configuration option "keyexchange_in_background" (refer to lcm.h)
 * At this point, just use the created lcm instance as you normally would.
 
 An Example for an application using LCMsec can be found in `examples/cpp_security` folder.

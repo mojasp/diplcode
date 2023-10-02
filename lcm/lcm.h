@@ -196,27 +196,19 @@ lcm_t *lcm_create(const char *provider);
 typedef struct {
     /*
      * @brief string describing the Cryptographic algorithm and mode of operation used
+     * ChaChaPoly1305 may be preferred for devices without hardware support for AES.
+     * However, Note that all devices active on the same multicastgroup must be configured to use the same algorithm
      * Possible options are:
          "AES-128/GCM"
          "ChaChaPoly1305"
-         May not be null. If empty, will be set to AES-128/GCM
+     * If NULL, "AES-128/GCM" will be used
      */
     char *algorithm;
 
     /*
-     * @brief
-     * Whether to run the keyagreement in the background
-     *
-     * If true, a thread will be started in the background to run the group key agreement protocol
-     * If false, keyagreement will be performed only on startup. If dynamic properties of the key
-     * agreement are desired, call lcm_perform_keyexchange to explicitly perform the keyexchange
-     */
-    int keyexchange_in_background;
-
-    /*
-     * domainurl on which to perform the keyagreement.
+     * Multicasturl on which to perform the keyagreement. Use if you want to use a different url for the keyexchange
      * must be a valid lcm udpm provider url, e.g. 239.255.76.67:7667; optional ttl's may exists.
-     * Can be NULL: in this case, const char *provider will be used for the keyagreement
+     * If NULL, the url from the lcm instance will be used for the keyagreement
      */
     const char* keyexchange_url;
 
@@ -231,7 +223,7 @@ typedef struct {
     char *keyfile;
 
     /**
-     * @brief string with the relative path to the root certificate used to sign certificate
+     * @brief string with the relative path to the root certificate from which key and certificate are derived
      */
     char *root_ca;
 } lcm_security_parameters;
@@ -375,9 +367,6 @@ int lcm_handle(lcm_t *lcm);
  */
 LCM_EXPORT
 int lcm_handle_timeout(lcm_t *lcm, int timeout_millis);
-
-LCM_EXPORT
-int lcm_perform_keyexchange(lcm_t *lcm);
 
 /**
  * @brief Adjusts the maximum number of received messages that can be queued up

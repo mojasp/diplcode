@@ -2,7 +2,7 @@
 #include <string.h>
 
 lcm_t *lcmsec_setup(int id) {
-    lcm_security_parameters secparams;
+    lcm_security_parameters secparams={0};
 
     char key[100];
     char cert[100];
@@ -16,8 +16,6 @@ lcm_t *lcmsec_setup(int id) {
     secparams.keyfile = key;
 
     secparams.algorithm = strdup("AES-128/GCM");
-    secparams.keyexchange_in_background = 1;
-    secparams.keyexchange_url = strdup("udpm://239.255.76.67:7667");
 
     secparams.root_ca = strdup("test_chain/root_ca.crt");
 

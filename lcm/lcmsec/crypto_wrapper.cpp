@@ -237,10 +237,8 @@ class _lcm_security_ctx {
         }
         ev_loop->run(1 + channel_ctx_map.size());
 
-        if (params->keyexchange_in_background) {
-            std::thread t([this] { perform_keyexchange(); });
-            keyagree_threads.push_back(MOV(t));
-        }
+        std::thread t([this] { perform_keyexchange(); });
+        keyagree_threads.push_back(MOV(t));
     }
 
     void perform_keyexchange()

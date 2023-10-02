@@ -209,15 +209,6 @@ inline int LCM::handle()
     return lcm_handle(this->lcm);
 }
 
-inline int LCM::perform_keyexchange()
-{
-    if (!this->lcm) {
-        fprintf(stderr, "LCM instance not initialized.  Ignoring call to handle()\n");
-        return -1;
-    }
-    return lcm_perform_keyexchange(this->lcm);
-}
-
 inline int LCM::handleTimeout(int timeout_millis)
 {
     if (!this->lcm) {
