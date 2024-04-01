@@ -75,6 +75,8 @@ class Dutta_Barua_GKE {
     virtual void debug(std::string msg) = 0;
 
   protected:
+    uint64_t chosen_challenge;
+
     GkexchgManagedState managed_state;
     STATE state{STATE::keyexchg_not_started};
     JOIN_ROLE role{JOIN_ROLE::invalid};
@@ -168,6 +170,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     };
 
     std::vector<joindesc> observed_joins;
+    std::vector<uint64_t> challenges;
 
     void publish(Dutta_Barua_message &msg) override;
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
