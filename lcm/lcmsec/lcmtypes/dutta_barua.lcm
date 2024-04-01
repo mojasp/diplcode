@@ -4,8 +4,6 @@ struct Dutta_Barua_message
 {
     int32_t u;
 
-
-
     //either one or two
     int8_t round;
 
