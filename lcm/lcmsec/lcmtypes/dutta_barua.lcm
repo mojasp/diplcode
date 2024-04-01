@@ -4,6 +4,8 @@ struct Dutta_Barua_message
 {
     int32_t u;
 
+
+
     //either one or two
     int8_t round;
 
@@ -24,6 +26,8 @@ struct Dutta_Barua_cert {
 
 struct Dutta_Barua_JOIN
 {
+    int64_t attestation_challenge;
+
     int64_t timestamp_r1start_us;
     Dutta_Barua_cert certificate;
 
@@ -33,6 +37,9 @@ struct Dutta_Barua_JOIN
 
 struct Dutta_Barua_JOIN_response 
 {
+    int64_t att_randomlocal;
+    int64_t att_challenge;
+
     int64_t timestamp_r1start_us;
 
     int32_t participants;
@@ -52,4 +59,3 @@ struct Dutta_Barua_JOIN_response
     int32_t sig_size;
     byte sig [sig_size];
 }
-
