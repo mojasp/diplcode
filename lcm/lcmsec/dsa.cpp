@@ -9,7 +9,7 @@
 #include <botan/x509cert.h>
 
 #include <chrono>
-#include <algorithm>
+#include <cassert>
 
 #include "lcmsec/crypto_wrapper.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_cert.hpp"
@@ -142,8 +142,8 @@ std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_JOIN &msg) const
     signer.update((const uint8_t *) &msg.certificate.cert_size, 4);
     signer.update(msg.certificate.x509_certificate_BER);
     signer.update((const uint8_t *) &msg.timestamp_r1start_us, 8);
-    signer.update((const uint8_t *) &msg.attestation_challenge, 8);
 
+    signer.update(msg.attestation_challenge, msg.att_randomness_bytes);
     return signer.signature(rng);
 }
 
@@ -163,6 +163,14 @@ std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_JOIN_response &msg) cons
         signer.update(e.x509_certificate_BER);
     }
     signer.update((const uint8_t *) &msg.timestamp_r1start_us, 8);
+
+    signer.update(msg.att_randomlocal, msg.att_randomness_bytes);
+    signer.update(msg.att_challenge, msg.att_randomness_bytes);
+    signer.update((const uint8_t*) &msg.n_observed_challenges, 4);
+    for(auto& c: msg.att_observed_challenges) {
+        assert(c.size() == msg.att_randomness_bytes);
+        signer.update(c.data(), msg.att_randomness_bytes);
+    }
     return signer.signature(rng);
 }
 
@@ -299,7 +307,7 @@ class DSA_verifier::impl {
         verifier.update((const uint8_t *) &msg->certificate.cert_size, 4);
         verifier.update(msg->certificate.x509_certificate_BER);
         verifier.update((const uint8_t *) &msg->timestamp_r1start_us, 8);
-        verifier.update((const uint8_t *) &msg->attestation_challenge, 8);
+        verifier.update(msg->attestation_challenge, msg->att_randomness_bytes);
 
         if (!verifier.check_signature((const uint8_t *) msg->sig.data(), msg->sig_size)) {
             return false;
@@ -348,6 +356,15 @@ class DSA_verifier::impl {
             verifier.update(e.x509_certificate_BER);
         }
         verifier.update((const uint8_t *) &msg->timestamp_r1start_us, 8);
+
+        verifier.update(msg->att_randomlocal, msg->att_randomness_bytes);
+        verifier.update(msg->att_challenge, msg->att_randomness_bytes);
+        verifier.update((const uint8_t*) &msg->n_observed_challenges, 4);
+        for(auto& c: msg->att_observed_challenges) {
+            assert(c.size() == msg->att_randomness_bytes);
+            verifier.update(c.data(), msg->att_randomness_bytes);
+        }
+
 
         if (!verifier.check_signature((const uint8_t *) msg->sig.data(), msg->sig_size)) {
             return false;

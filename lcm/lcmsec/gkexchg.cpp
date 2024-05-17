@@ -15,17 +15,17 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <numeric>
 #include <iterator>
+#include <numeric>
 #include <sstream>
 
-#include "lcmsec/ra.hpp"
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmsec_util.h"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
+#include "lcmsec/ra.hpp"
 
 namespace lcmsec_impl {
 
@@ -138,7 +138,8 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
               std::to_string(msg->u) + ". must be larger than " +
               std::to_string(session_id[msg->u]) + ". Dropping Dutta_Barua_message.");
         return;
-        //Note that replaying a message of the current round possible, but it will not have an effect
+        // Note that replaying a message of the current round possible, but it will not have an
+        // effect
     }
 
     int remote_uid = managed_state.uid_to_protocol_uid(msg->u);
@@ -149,10 +150,10 @@ void KeyExchangeManager::on_msg(const Dutta_Barua_message *msg)
             int right = 3;
             auto remote_proto_uid = managed_state.uid_to_protocol_uid(msg->u);
             if (remote_proto_uid == left)
-                if(!r1_messages.left)
+                if (!r1_messages.left)
                     r1_messages.left = *msg;
             if (remote_proto_uid == right)
-                if(!r1_messages.right)
+                if (!r1_messages.right)
                     r1_messages.right = *msg;
         } else {
             if (msg->round != 2) {
@@ -228,8 +229,8 @@ void KeyExchangeManager::JOIN()
     join.certificate.x509_certificate_BER = cert.BER_encode();
     join.certificate.cert_size = join.certificate.x509_certificate_BER.size();
 
-    chosen_challenge = RA::sample_challenge();
-    join.attestation_challenge = chosen_challenge;
+    // chosen_challenge = RA::sample_challenge(); FIXME
+    // join.attestation_challenge 
 
     sign_msg(join);
 
@@ -349,6 +350,32 @@ void KeyExchangeManager::JOIN_response()
     int us_offset = (std::rand() % (2 * td_range_us)) - td_range_us;
     response.timestamp_r1start_us += us_offset;
 
+    // Attestation management
+    if (response.role == Dutta_Barua_JOIN_response::ROLE_JOINING) {
+        // IF we are joining, we previously chose a challenge
+        // response.att_challenge = chosen_challenge;
+        //
+        // response.observed_challenges.resize(ra_challenges.size());
+        // std::copy(ra_challenges.begin(), ra_challenges.end(), response.observed_challenges.begin());
+    //     response.n_observed_challenges = response.observed_challenges.size();
+    //     response.att_randomlocal = 0;  // Unused here
+    // } else {
+    //     assert(response.role == Dutta_Barua_JOIN_response::ROLE_PARTICIPANT);
+    //     // Since we are already a participant, we have knowledge of the challenge that was used in
+    //     // the previous keyagreement/attestation round.
+    //     //
+    //     // Derive challenge from random number, accepted r1 start timestamp and previous challenge
+    //     //
+    //     auto &rng = Botan::system_rng();
+    //     response.att_randomlocal =
+    //
+    //     std::vector<uint8_t> hkdf_input.
+    //         //FIXME / this is sloppy, fixup data types for ra
+    //
+    //     auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");
+    //     auto derived_key = kdf->derive_key(derived_key_len, input_secret, salt, label);
+    }
+
     sign_msg(response);
     std::string ch = std::string("join_resp") + groupexchg_channelname;
 
@@ -360,7 +387,6 @@ void KeyExchangeManager::JOIN_response()
     for (const joindesc *e : unanswered_joins) {
         managed_state.add_joining(e->uid);
     }
-
     TracyCZoneEnd(tracy_ctx);
 
     lcm.publish(ch, &response);
@@ -506,6 +532,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
                   .count()) +
           "milliseconds");
     observed_joins.push_back(joindesc{remote_uid.value(), join_msg->timestamp_r1start_us});
+    ra_challenges.emplace_back(join_msg->attestation_challenge, join_msg->attestation_challenge + join_msg->att_randomness_bytes);
     add_task(response_timepoint, [this] { JOIN_response(); });
 }
 
@@ -782,7 +809,8 @@ Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_siz
             ". Maybe the group key "
             "exchange algorithm was not successful\n");
     auto kdf = Botan::get_kdf("KDF2(SHA-256)");
-    std::vector<uint8_t> encoded = shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
+    std::vector<uint8_t> encoded =
+        shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
 
     // set salt and label to empty vector. This is the same thing that the kdf->encode(size_t,
     // Botan::secure_vector<uint8_t>) overload does, however, it cannot deal with an std::vector.

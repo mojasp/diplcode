@@ -24,7 +24,8 @@ struct Dutta_Barua_cert {
 
 struct Dutta_Barua_JOIN
 {
-    int64_t attestation_challenge;
+    const int32_t att_randomness_bytes=32;
+    byte attestation_challenge[att_randomness_bytes];
 
     int64_t timestamp_r1start_us;
     Dutta_Barua_cert certificate;
@@ -35,8 +36,13 @@ struct Dutta_Barua_JOIN
 
 struct Dutta_Barua_JOIN_response 
 {
-    int64_t att_randomlocal;
-    int64_t att_challenge;
+    const int32_t att_randomness_bytes=32;
+    byte att_randomlocal[att_randomness_bytes];
+
+    byte att_challenge[att_randomness_bytes];
+
+    int32_t n_observed_challenges;
+    byte att_observed_challenges[n_observed_challenges][att_randomness_bytes];
 
     int64_t timestamp_r1start_us;
 

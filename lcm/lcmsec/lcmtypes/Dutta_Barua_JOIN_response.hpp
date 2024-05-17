@@ -18,9 +18,13 @@
 class Dutta_Barua_JOIN_response
 {
     public:
-        int64_t    att_randomlocal;
+        uint8_t    att_randomlocal[32];
 
-        int64_t    att_challenge;
+        uint8_t    att_challenge[32];
+
+        int32_t    n_observed_challenges;
+
+        std::vector< std::vector< uint8_t > > att_observed_challenges;
 
         int64_t    timestamp_r1start_us;
 
@@ -45,6 +49,7 @@ class Dutta_Barua_JOIN_response
         std::vector< uint8_t > sig;
 
     public:
+        enum { att_randomness_bytes = 32 };
         /// Role of sender
         enum { ROLE_JOINING = 1 };
         enum { ROLE_PARTICIPANT = 2 };
@@ -145,11 +150,19 @@ int Dutta_Barua_JOIN_response::_encodeNoHash(void *buf, int offset, int maxlen) 
 {
     int pos = 0, tlen;
 
-    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->att_randomlocal, 1);
+    tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->att_randomlocal[0], 32);
     if(tlen < 0) return tlen; else pos += tlen;
 
-    tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->att_challenge, 1);
+    tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->att_challenge[0], 32);
     if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->n_observed_challenges, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    for (int a0 = 0; a0 < this->n_observed_challenges; a0++) {
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->att_observed_challenges[a0][0], 32);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
 
     tlen = __int64_t_encode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_us, 1);
     if(tlen < 0) return tlen; else pos += tlen;
@@ -191,11 +204,27 @@ int Dutta_Barua_JOIN_response::_decodeNoHash(const void *buf, int offset, int ma
 {
     int pos = 0, tlen;
 
-    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->att_randomlocal, 1);
+    tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->att_randomlocal[0], 32);
     if(tlen < 0) return tlen; else pos += tlen;
 
-    tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->att_challenge, 1);
+    tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->att_challenge[0], 32);
     if(tlen < 0) return tlen; else pos += tlen;
+
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->n_observed_challenges, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    try {
+        this->att_observed_challenges.resize(this->n_observed_challenges);
+    } catch (...) {
+        return -1;
+    }
+    for (int a0 = 0; a0 < this->n_observed_challenges; a0++) {
+        if(32) {
+            this->att_observed_challenges[a0].resize(32);
+            tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->att_observed_challenges[a0][0], 32);
+            if(tlen < 0) return tlen; else pos += tlen;
+        }
+    }
 
     tlen = __int64_t_decode_array(buf, offset + pos, maxlen - pos, &this->timestamp_r1start_us, 1);
     if(tlen < 0) return tlen; else pos += tlen;
@@ -247,8 +276,10 @@ int Dutta_Barua_JOIN_response::_decodeNoHash(const void *buf, int offset, int ma
 int Dutta_Barua_JOIN_response::_getEncodedSizeNoHash() const
 {
     int enc_size = 0;
-    enc_size += __int64_t_encoded_array_size(NULL, 1);
-    enc_size += __int64_t_encoded_array_size(NULL, 1);
+    enc_size += __byte_encoded_array_size(NULL, 32);
+    enc_size += __byte_encoded_array_size(NULL, 32);
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
+    enc_size += this->n_observed_challenges * __byte_encoded_array_size(NULL, 32);
     enc_size += __int64_t_encoded_array_size(NULL, 1);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     for (int a0 = 0; a0 < this->participants; a0++) {
@@ -273,7 +304,7 @@ uint64_t Dutta_Barua_JOIN_response::_computeHash(const __lcm_hash_ptr *p)
             return 0;
     const __lcm_hash_ptr cp = { p, Dutta_Barua_JOIN_response::getHash };
 
-    uint64_t hash = 0xd6261575eaf548abLL +
+    uint64_t hash = 0x4d3e4a044678044dLL +
          Dutta_Barua_cert::_computeHash(&cp) +
          Dutta_Barua_cert::_computeHash(&cp) +
          Dutta_Barua_cert::_computeHash(&cp);
