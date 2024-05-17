@@ -170,7 +170,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     };
 
     std::vector<joindesc> observed_joins;
-    std::vector<uint64_t> challenges;
+    std::vector<uint64_t> ra_challenges;
 
     void publish(Dutta_Barua_message &msg) override;
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);

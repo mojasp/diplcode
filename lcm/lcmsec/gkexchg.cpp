@@ -19,6 +19,7 @@
 #include <iterator>
 #include <sstream>
 
+#include "lcmsec/ra.hpp"
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmsec_util.h"
@@ -226,6 +227,9 @@ void KeyExchangeManager::JOIN()
     auto &cert = DSA_certificate_self::getInst().cert;
     join.certificate.x509_certificate_BER = cert.BER_encode();
     join.certificate.cert_size = join.certificate.x509_certificate_BER.size();
+
+    chosen_challenge = RA::sample_challenge();
+    join.attestation_challenge = chosen_challenge;
 
     sign_msg(join);
 

@@ -7,9 +7,7 @@
 //TODO: STUBS for now
 namespace RA {
 
-#define SECPARAM
-    
-    inline uint64_t sample_random(){
+    inline uint64_t sample_challenge(){
         return std::rand();
     }
 
@@ -18,7 +16,7 @@ namespace RA {
     }
 
     inline bool verify(uint64_t evidence){
-        return std::rand();
+        return true;
     }
 }
 
