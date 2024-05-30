@@ -249,7 +249,7 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
 
     // any existing fragment buffer for this message source?
     lcm_frag_key_t key;
-    key.from = &(lcmb->from);
+    key.from = (struct sockaddr_in*) &(lcmb->from);
     key.msg_seqno = msg_seqno;
     lcm_frag_buf_t *fbuf = lcm_frag_buf_store_lookup(lcm->frag_bufs, &key);
 
@@ -279,7 +279,7 @@ static int _recv_message_fragment_secured(lcm_udpm_t *lcm, lcm_buf_t *lcmb, uint
 
         lcmb->channel_size =
             lcm_decrypt_channelname(lcm->security_ctx, sender_id, seqno, pkt_channel_str_ct,
-                                    sz - sizeof(lcm2_header_long_secured_t), &channel);
+                                    sz - sizeof(lcm2_header_long_secured_t), (uint8_t**) &channel);
         if (lcmb->channel_size > LCM_MAX_CHANNEL_NAME_LENGTH) {
             dbg(DBG_LCM, "bad channel name length\n");
             lcm->udp_discarded_bad++;
