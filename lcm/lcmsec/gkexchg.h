@@ -29,9 +29,16 @@ class Dutta_Barua_GKE {
     Dutta_Barua_GKE(int uid);
     virtual ~Dutta_Barua_GKE();
 
+  protected:
+    TracyCZoneCtx tracy_startupctx;
+    TracyCZoneCtx tracy_attestctx;
+    TracyCZoneCtx tracy_gkexchgctx;
+    TracyCZoneCtx tracy_gkandattest_ctx;
+
   public:
     virtual void publish(Dutta_Barua_message &msg) = 0;
     virtual void gkexchg_finished() = 0;          // hook for child to override
+    virtual void check_finished() = 0;
     [[nodiscard]] virtual STATE &getState() = 0;  // hook for child to override
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() = 0;
 
@@ -74,24 +81,14 @@ class Dutta_Barua_GKE {
 
     virtual void debug(std::string msg) = 0;
 
-  protected:
-
-    std::optional<std::vector<uint8_t>> ra_prev_round_challenge;
-    std::optional<std::vector<uint8_t>> chosen_challenge;
-
-    GkexchgManagedState managed_state;
-    STATE state{STATE::keyexchg_not_started};
-    JOIN_ROLE role{JOIN_ROLE::invalid};
-
-    bool _checkState(STATE s) { return (state == s) ? true : false; }
-
+    bool _checkState(STATE s) const { return (state == s) ? true : false; }
     template <typename STATE, typename... States>
-    bool _checkState(STATE s, States... ss)
+    bool _checkState(STATE s, States... ss) const
     {
         return checkState(s) || checkState(ss...);
     }
     template <typename... States>
-    bool checkState(States... ss)
+    bool checkState(States... ss) const
     {
         bool result = _checkState(ss...);
         // if (!result) {
@@ -100,13 +97,21 @@ class Dutta_Barua_GKE {
         return result;
     }
 
+  protected:
+    std::optional<std::vector<uint8_t>> ra_prev_round_challenge;
+    int64_t prev_r1start = {0};
+    std::optional<std::vector<uint8_t>> chosen_challenge;
+
+    GkexchgManagedState managed_state;
+    STATE state{STATE::keyexchg_not_started};
+    RA_STATE ra_state {RA_STATE::not_started};
+    JOIN_ROLE role{JOIN_ROLE::invalid};
+
     static void db_set_public_value(Dutta_Barua_message &msg, const Botan::PointGFp &point);
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::PointGFp &point);
 };
 
 class KeyExchangeManager : public Dutta_Barua_GKE {
-  private:
-    TracyCZoneCtx gkexchg_context;
 
   public:
     // Recovery management:
@@ -129,6 +134,11 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     void onJOIN(const Dutta_Barua_JOIN *join_msg);
     void on_JOIN_response(const Dutta_Barua_JOIN_response *join_response);
 
+    void ra_attest_asnyc();
+    void ra_attest_finish();
+
+    void ra_verify(const Attestation_Evidence& evidence);
+
     void on_msg(const Dutta_Barua_message *msg);
 
     inline bool hasNewKey()
@@ -150,11 +160,13 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     std::string debug_channelname;
     std::string mcastgroup;
 
-    std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
+    const std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
         125);  // delay start of round1 after the first join() by this time
-    std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
-    std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
-    std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(800);
+    const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
+    const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
+    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(800);
+
+    const std::chrono::milliseconds ra_t_variance = std::chrono::milliseconds(20);
 
     [[nodiscard]] virtual inline STATE &getState() override { return state; }
 
@@ -171,8 +183,43 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         int64_t req_r1start;
     };
 
+    static constexpr int att_randomness_bytes = 32;
     std::vector<joindesc> observed_joins;
     std::vector<std::vector<uint8_t>> ra_challenges;
+    Botan::secure_vector<uint8_t> joint_challenge;
+    std::chrono::high_resolution_clock::time_point ra_tp_prev_invocation =
+        std::chrono::high_resolution_clock::time_point::min();
+    std::vector<int> verified_peers;
+
+    struct joinresponse_ra_params {
+        std::vector<std::array<uint8_t, att_randomness_bytes>> observed_challenges_buffer;
+        int n_observed_challenges;
+
+        int nodes_to_verify;
+        enum class RA_ROLE {joining, representative, passive} ra_role;
+
+        uint8_t challenge[att_randomness_bytes];
+        uint8_t randomlocal[att_randomness_bytes];
+
+        int64_t t_r1start;
+
+        // copy into existing jr_ra_params while reusing memory if possible.
+        void from_JOIN_Response(const Dutta_Barua_JOIN_response *from, int num_joining, int num_participants,
+                                const KeyExchangeManager &mgr);
+
+        // check whether challenge exists in observed_joins from the response; or is equal to the
+        // challenge included in the accepted join response
+        //
+        // Note: we assume that observed challenges are not super big; so that it is more efficient
+        // to compare with O(n) instead of sorting when inserting new elements
+        bool lookup_challenge(const uint8_t *challenge, size_t challenge_sz,
+                              const KeyExchangeManager &mgr);
+
+        // reuse buffer for observed joins: add the chosen challenge to the end
+        // NOTE: it is safe to call lookup_challenge after prep_joint_challenge
+        void prep_joint_challenge(const KeyExchangeManager &mgr);
+    };
+    std::optional<joinresponse_ra_params> jr_ra_params;
 
     void publish(Dutta_Barua_message &msg) override;
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
@@ -182,6 +229,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         CRYPTO_DBG("u%i: ch:%s %s\n", uid.u, groupexchg_channelname.c_str(), msg.c_str());
     }
 
+    void check_finished() override;
     void gkexchg_finished() override;
 };
 
@@ -200,6 +248,9 @@ class KeyExchangeLCMHandler {
                      const Dutta_Barua_JOIN *join_msg);
     void handle_JOIN_response(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                               const Dutta_Barua_JOIN_response *join_response);
+
+    void handle_Attestation_Evidence(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                                     const Attestation_Evidence *evidence);
 
     bool hasNewKey() { return impl.hasNewKey(); }
     /*

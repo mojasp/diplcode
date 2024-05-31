@@ -10,8 +10,8 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <unordered_map>
 
+#include "lcmsec/lcmtypes/Attestation_Evidence.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"

@@ -134,6 +134,7 @@ std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_message &msg) const
 
     return signer.signature(rng);
 }
+
 std::vector<uint8_t> DSA_signer::sign(const Dutta_Barua_JOIN &msg) const
 {
     Botan::AutoSeeded_RNG rng;

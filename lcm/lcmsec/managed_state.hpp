@@ -104,7 +104,7 @@ class GkexchgManagedState {
 
     [[nodiscard]] std::optional<std::chrono::high_resolution_clock::time_point> r1start() const;
 
-    [[nodiscard]] bool find_uid_in_participants(int uid) const;
+    [[nodiscard]] bool exists_in_participants(int uid) const;
     [[nodiscard]] bool exists_in_joining(int uid) const;
 
     [[nodiscard]] inline bool is_locked() const { return locked; }

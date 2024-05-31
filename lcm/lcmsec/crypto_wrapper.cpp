@@ -12,8 +12,6 @@
 #include <udpm_util.h>
 
 #include <cstdio>
-#include <functional>
-#include <iostream>
 #include <string>
 
 #include "gkexchg.h"
@@ -222,6 +220,9 @@ class _lcm_security_ctx {
                            keyExchangeManager.get());
             lcm->subscribe("join_resplcm://" + keyxchg_channel,
                            &lcmsec_impl::KeyExchangeLCMHandler::handle_JOIN_response,
+                           keyExchangeManager.get());
+            lcm->subscribe("attestlcm://" + keyxchg_channel,
+                           &lcmsec_impl::KeyExchangeLCMHandler::handle_Attestation_Evidence,
                            keyExchangeManager.get());
             if (cap.channelname) {
                 char *copy = (char *) malloc(LCM_MAX_CHANNEL_NAME_LENGTH + 1);

@@ -49,6 +49,17 @@ public:
     inline lcmsec_exception& operator=(lcmsec_exception&&)=default;
 };
 
+class attestation_exception : public lcmsec_exception {
+public:
+    inline attestation_exception( const std::string& what_arg ) : lcmsec_exception(what_arg) {}
+    inline attestation_exception( const char* what_arg ) : lcmsec_exception(what_arg) {}
+
+    inline attestation_exception(const attestation_exception&)=default;
+    inline attestation_exception(attestation_exception&&)=default;
+    inline attestation_exception& operator=(const attestation_exception&)=default;
+    inline attestation_exception& operator=(attestation_exception&&)=default;
+};
+
 class keyagree_exception : public lcmsec_exception {
 public:
     inline keyagree_exception( const std::string& what_arg ) : lcmsec_exception(what_arg) {}

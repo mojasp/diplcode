@@ -143,7 +143,7 @@ TEST(LCMSEC_C, cross_package)
     EXPECT_EQ(1, do_lcmtest2_cross_package_t_test());
 }
 
-static int g_lcmsec_cycle_test_got_messages [8];
+static int g_lcmsec_cycle_test_got_messages [9];
 
 static void lcmsec_cycle_test_handler(const lcm_recv_buf_t *, const char *, const lcmtest_primitives_t *msg, void *userdata)
 {                                                                                         \

@@ -129,9 +129,9 @@ bool GkexchgManagedState::is_right_neighbour(int uid, const Dutta_Barua_message 
     return their_uid == neighbour;
 }
 
-bool GkexchgManagedState::find_uid_in_participants(int uid) const
+bool GkexchgManagedState::exists_in_participants(int uid) const
 {
-    throw("unimplemented");
+    return std::find(participants.cbegin(), participants.cend(), uid) != participants.cend();
 }
 
 [[nodiscard]] ProtoUidView const& GkexchgManagedState::uid_view() const{

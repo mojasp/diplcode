@@ -63,3 +63,15 @@ struct Dutta_Barua_JOIN_response
     int32_t sig_size;
     byte sig [sig_size];
 }
+
+struct Attestation_Evidence {
+    int32_t quote_size;
+    byte quote[quote_size];
+
+    int32_t sig_size;
+    byte quote_signature [sig_size];
+
+    //Certificate
+    int32_t cert_size;
+    byte cert[cert_size];
+}

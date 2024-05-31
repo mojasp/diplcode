@@ -22,6 +22,7 @@
 #include "lcmsec/dsa.h"
 #include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmsec_util.h"
+#include "lcmsec/lcmtypes/Attestation_Evidence.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
@@ -60,7 +61,13 @@ KeyExchangeManager::KeyExchangeManager(capability cap, eventloop &ev_loop, lcm::
     });
 }
 
-Dutta_Barua_GKE::Dutta_Barua_GKE(int uid) : uid{uid, 1} {}
+Dutta_Barua_GKE::Dutta_Barua_GKE(int uid)
+    : uid{
+          uid,
+          1  // uid.d defaults to 1 according to dutta barua paper
+      }
+{
+}
 Dutta_Barua_GKE::~Dutta_Barua_GKE() {}
 
 template <typename message_t>
@@ -104,6 +111,11 @@ void KeyExchangeManager::add_task(eventloop::timepoint_t tp, std::function<void(
             f();
         } catch (keyagree_exception &e) {
             std::cerr << "keyagree failed on channel"
+                      << channelname.value_or("nullopt") + " with: " << e.what()
+                      << " ! Restarting Key agreement...." << std::endl;
+            gkexchg_failure();
+        } catch (attestation_exception &e) {
+            std::cerr << "Attestation FAILED! on "
                       << channelname.value_or("nullopt") + " with: " << e.what()
                       << " ! Restarting Key agreement...." << std::endl;
             gkexchg_failure();
@@ -207,8 +219,8 @@ void KeyExchangeManager::JOIN()
     // dispatchn our own yet
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase);
     if (state != STATE::consensus_phase) {
-        TracyCZoneN(ctx, "group key agreement", 1);
-        TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+        TracyCZoneN(ctx, "LCMsec Startup", 1);
+        TRACY_ASSIGN_CTX(tracy_startupctx, ctx);
         if (state == STATE::keyexchg_not_started)
             role = JOIN_ROLE::joining;
         else
@@ -380,7 +392,7 @@ void KeyExchangeManager::JOIN_response()
 
         auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");
         auto challenge = kdf->derive_key(32, challenge_buffer, std::vector<uint8_t>{},
-                               std::vector<uint8_t>{});  // derive without salt/label
+                                         std::vector<uint8_t>{});  // derive without salt/label
 
         assert(challenge.size() == 32);
         std::copy(challenge.begin(), challenge.end(), response.att_challenge);
@@ -409,9 +421,12 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
 {
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase,
                       STATE::keyexchg_successful);
+    std::chrono::high_resolution_clock::time_point requested_starting_time{
+        std::chrono::microseconds(join_response->timestamp_r1start_us)};
+
     if (state != STATE::consensus_phase) {
-        TracyCZoneN(ctx, "group key agreement", 1);
-        TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+        TracyCZoneN(ctx, "LCMsec Startup", 1);
+        TRACY_ASSIGN_CTX(tracy_startupctx, ctx);
 
         state = STATE::consensus_phase;
         if (state == STATE::keyexchg_not_started)
@@ -491,8 +506,6 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     }
 
     // Third: achieve consensus on start of round
-    std::chrono::high_resolution_clock::time_point requested_starting_time{
-        std::chrono::microseconds(join_response->timestamp_r1start_us)};
     if (!managed_state.process_timestamp(requested_starting_time)) {
         dbg_reject(
             "response.participants == participants && response.joining == joining but "
@@ -501,7 +514,31 @@ void KeyExchangeManager::on_JOIN_response(const Dutta_Barua_JOIN_response *join_
     }
     dbg_accept();
 
+    // since the JOIN_Response is accepted, save its parameters
+    if (!jr_ra_params)
+        jr_ra_params = joinresponse_ra_params{};
+    jr_ra_params->from_JOIN_Response(join_response, candidate_joining.size(),
+                                     candidate_participants.size(), *this);
+    if (role == JOIN_ROLE::joining)
+        jr_ra_params->ra_role = joinresponse_ra_params::RA_ROLE::joining;
+    else if (remote_uid == uid.u)
+        jr_ra_params->ra_role = joinresponse_ra_params::RA_ROLE::representative;
+    else
+        jr_ra_params->ra_role = joinresponse_ra_params::RA_ROLE::passive;
+
     add_task(requested_starting_time, [this] { start_join(); });
+
+    // To make state logic work, start_join should be called first by the eventloop. Note that this
+    // does not introduce a race condition, tasks in the eventloop are strictly oredered by their
+    // timestamps. So start_join() will ALWAYS be called first
+    evloop.push_task(requested_starting_time + std::chrono::milliseconds(1),
+                     [=, this, invo_cnt = uid.d] {
+                         assert(this->uid.d >= invo_cnt);
+                         if (invo_cnt != this->uid.d) {
+                             return;
+                         }
+                         ra_attest_asnyc();
+                     });
 }
 
 void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
@@ -509,10 +546,9 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
     LCMSEC_CHECKSTATE(STATE::keyexchg_not_started, STATE::consensus_phase,
                       STATE::keyexchg_successful);
     if (checkState(STATE::keyexchg_not_started, STATE::keyexchg_successful)) {
-        TracyCZoneN(ctx, "group key agreement", 1);
-        TRACY_ASSIGN_CTX(gkexchg_context, ctx);
+        TracyCZoneN(ctx, "LCMsec Startup", 1);
+        TRACY_ASSIGN_CTX(tracy_startupctx, ctx);
 
-        state = STATE::consensus_phase;
         if (state == STATE::keyexchg_not_started)
             role = JOIN_ROLE::joining;
         else
@@ -520,6 +556,7 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 
         state = STATE::consensus_phase;
     }
+    ra_state = RA_STATE::not_started;
 
     ZoneScopedN("on_JOIN");
 
@@ -530,6 +567,10 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
 
     if (!verifier.verify(join_msg, mcastgroup, channelname, *remote_uid))
         return;
+
+    if (managed_state.exists_in_participants(*remote_uid))
+        throw rejoin_error("uid  " + std::to_string(*remote_uid) +
+                           " tries to join, but is part of group already");
 
     // dispatch JOIN_response at a random time
     using namespace std::chrono;
@@ -548,6 +589,62 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
     ra_challenges.emplace_back(join_msg->attestation_challenge,
                                join_msg->attestation_challenge + join_msg->att_randomness_bytes);
     add_task(response_timepoint, [this] { JOIN_response(); });
+}
+
+void KeyExchangeManager::joinresponse_ra_params::from_JOIN_Response(
+    const Dutta_Barua_JOIN_response *from, int num_joining, int num_participants,
+    const KeyExchangeManager &mgr)
+{
+    if (!mgr.checkState(STATE::consensus_phase))
+        throw keyagree_exception(
+            "Logic Error: joinresponse_ra_params::from_JOIN_Response should only be called in "
+            "consensus phase");
+
+    static_assert(Dutta_Barua_JOIN::att_randomness_bytes == att_randomness_bytes);
+    std::copy(from->att_challenge, from->att_challenge + from->att_randomness_bytes, challenge);
+
+    std::copy(from->att_randomlocal, from->att_randomlocal + from->att_randomness_bytes,
+              randomlocal);
+    // grow buffer if required
+    observed_challenges_buffer.resize(std::max(static_cast<size_t>(from->n_observed_challenges),
+                                               observed_challenges_buffer.size()));
+    n_observed_challenges = from->n_observed_challenges;
+    this->t_r1start = from->timestamp_r1start_us;
+
+    for (int i = 0; i < from->n_observed_challenges; i++) {
+        auto &c = from->att_observed_challenges[i];
+        std::copy(from->att_observed_challenges[i].begin(), from->att_observed_challenges[i].end(),
+                  observed_challenges_buffer[i].begin());
+    }
+
+    this->nodes_to_verify = (num_participants == 0) ? num_joining : num_joining + 1;
+}
+bool KeyExchangeManager::joinresponse_ra_params::lookup_challenge(const uint8_t *challenge,
+                                                                  size_t challenge_sz,
+                                                                  const KeyExchangeManager &mgr)
+{
+    assert(challenge_sz == att_randomness_bytes);
+
+    if (std::memcmp(this->challenge, challenge, challenge_sz))
+        return true;
+
+    for (int i = 0; i < n_observed_challenges; i++) {
+        if (std::memcmp(observed_challenges_buffer[i].data(), challenge, challenge_sz) == 0)
+            return true;
+    }
+    return false;
+}
+
+// reuse buffer for observed joins: add the chosen challenge to the end
+void KeyExchangeManager::joinresponse_ra_params::prep_joint_challenge(const KeyExchangeManager &mgr)
+{
+    // Make space
+    auto sz =
+        std::max(observed_challenges_buffer.size(), static_cast<size_t>(n_observed_challenges + 1));
+    observed_challenges_buffer.resize(sz);
+
+    std::copy(this->challenge, this->challenge + att_randomness_bytes,
+              observed_challenges_buffer[n_observed_challenges].data());
 }
 
 static std::ostringstream uid_vector_string(const std::vector<int> &v)
@@ -667,7 +764,7 @@ void Dutta_Barua_GKE::computeKey_passive()
     bool correctness = right_keys[lastindex] == r1_results.left;
 
     if (correctness)
-        debug("group key exchange successful!");
+        debug("group key agree successful!");
     else {
         TracyCZoneEnd(tracy_ctx);
         throw keyagree_exception("key computation correctness check failed");
@@ -680,7 +777,10 @@ void Dutta_Barua_GKE::computeKey_passive()
 
     TracyCZoneEnd(tracy_ctx);
     managed_state.gke_success();
-    gkexchg_finished();
+
+    state = STATE::computekey_done;
+    TracyCZoneEnd(tracy_gkexchgctx);
+    check_finished();
 }
 
 void Dutta_Barua_GKE::computeKey()
@@ -734,7 +834,9 @@ void Dutta_Barua_GKE::computeKey()
     }
     session_id = partial_session_id;
 
-    gkexchg_finished();
+    state = STATE::computekey_done;
+    TracyCZoneEnd(tracy_gkexchgctx);
+    check_finished();
 }
 
 void Dutta_Barua_GKE::cleanup_intermediates()
@@ -755,6 +857,12 @@ void Dutta_Barua_GKE::start_join()
     LCMSEC_CHECKSTATE(STATE::consensus_phase);
     managed_state.prepare_join();
     state = STATE::keyexchg_in_progress;
+
+    TracyCZoneN(tracyctx1, "gka and attest", 1);
+    TRACY_ASSIGN_CTX(tracy_gkandattest_ctx, tracyctx1);
+
+    TracyCZoneN(tracyctx, "gka", 1);
+    TRACY_ASSIGN_CTX(tracy_gkexchgctx, tracyctx);
 
     if (managed_state.num_participants() < 3) {
         x_i.reset();
@@ -788,31 +896,160 @@ void Dutta_Barua_GKE::start_join()
     }
 }
 
+void KeyExchangeManager::ra_verify(const Attestation_Evidence &evidence)
+{
+    std::cerr << "BEFORE RA VERIFY: RA_STATE= " << ra_state_name(ra_state)
+              << " ---  LCMSECSTATE= " << state_name(state) << std::endl;
+    LCMSEC_CHECKSTATE(STATE::keyexchg_in_progress, STATE::computekey_done);
+    TracyCZoneN(tracyctx, "ra_verify", 1);
+
+    bool result = RA::verifyReport(evidence, {});
+    TracyCZoneEnd(tracyctx);
+    if (result) {
+        verified_peers.push_back(1);  // DUMMY -- todo include senderID
+
+        std::cerr << " -------------AFTER RA VERIFY: verified " << verified_peers.size() << " of "
+                  << jr_ra_params->nodes_to_verify << std::endl;
+        if (verified_peers.size() == jr_ra_params->nodes_to_verify) {
+            ra_state = RA_STATE::all_verified;
+            check_finished();
+        }
+    } else {
+        std::cerr << "RA VERIFY FAILED " << std::endl;
+    }
+}
+
+void KeyExchangeManager::ra_attest_asnyc()
+{
+    // We can assert that we are in the keyagree phase; the eventloop will ALWAYS call start_join()
+    // before ra_attest since it is ordered by timestamps of tasks.
+    LCMSEC_CHECKSTATE(STATE::keyexchg_in_progress, STATE::computekey_done);
+    if (ra_state == RA_STATE::all_verified)
+        throw attestation_exception("Logic Error: illogical state in RA_ATTEST()");
+    if (jr_ra_params->ra_role == joinresponse_ra_params::RA_ROLE::passive)
+        return;  // no work tbd
+    if (ra_state != RA_STATE::not_started)
+        return;  // maintain idempotency of tasks
+    ra_state = RA_STATE::self_attest_started;
+
+    // Need to use tracy fibers to track async IO
+    std::string fibername = debug_channelname + std::string("attest");
+    TracyFiberEnter(fibername.c_str());
+    TracyCZoneN(ctx, "ra_attest", 1);
+    TRACY_ASSIGN_CTX(tracy_attestctx, ctx);
+    auto atexit = finally([] { TracyFiberLeave; });
+
+    if (!jr_ra_params->lookup_challenge(chosen_challenge.value().data(),
+                                        chosen_challenge.value().size(), *this)) {
+        throw attestation_exception(
+            "chosen challenge not part of accepted join response challenges");
+    }
+
+    if (jr_ra_params->t_r1start <= prev_r1start) {
+        throw attestation_exception(
+            "r1start of accepted joinresponse earlier than the chosne r1start of a previous "
+            "protocl invocation ");
+    }
+    debug("attest_async");
+
+    jr_ra_params->prep_joint_challenge(*this);
+
+    auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");  // FIXME keepalive
+
+    // Data of std::vector<std::array> lies in memory continouusly
+    joint_challenge = kdf->derive_key(
+        32, static_cast<uint8_t *>(jr_ra_params->observed_challenges_buffer[0].data()),
+        (jr_ra_params->n_observed_challenges + 1) * 32);
+
+    // Artificial delay instead of TPM_FAPI_Quote Async function call. Delay measured from tpm
+    const auto getquote_delay =
+        std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(445);
+    evloop.push_task(getquote_delay, [=, this, invo_cnt = uid.d] {
+        assert(this->uid.d >= invo_cnt);
+        if (invo_cnt != this->uid.d) {
+            return;
+        }
+        ra_attest_finish();
+    });
+}
+
+void KeyExchangeManager::ra_attest_finish()
+{
+    if (ra_state != RA_STATE::self_attest_started)
+        return;
+
+    debug("attest_finish");
+    std::string fibername = debug_channelname + std::string("attest");
+    TracyFiberEnter(fibername.c_str());
+    auto atexit = finally([] { TracyFiberLeave; });
+
+    // get quote by signing the nonce with the current software configuration
+    Attestation_Evidence evidence;
+
+    RA::generateReport(evidence, joint_challenge);
+
+    TracyCZoneEnd(tracy_attestctx);
+    ra_state = RA_STATE::self_attest_done;
+
+    std::string ch = std::string("attest") + groupexchg_channelname;
+    lcm.publish(ch, &evidence);
+}
+
 void KeyExchangeManager::gkexchg_failure()
 {
-    auto atexit = finally([&] { TracyCZoneEnd(gkexchg_context); });
+    auto atexit = finally([&] { TracyCZoneEnd(tracy_startupctx); });
+    if (ra_state != RA_STATE::self_attest_done)
+        TracyCZoneEnd(tracy_attestctx);
+
+    TracyCZoneEnd(tracy_gkandattest_ctx);
     ZoneScopedN("gkexchg_failure");
+
+    ra_tp_prev_invocation = std::chrono::high_resolution_clock::now();
+    verified_peers.clear();
+    ra_state = RA_STATE::not_started;
 
     state = STATE::keyexchg_not_started;
     role = JOIN_ROLE::invalid;
+
+    // clear session id; since the session is now over. Any new session will use fully newly
+    // generated secrets, there is no more active group from the point of view of this user. Replay
+    // attacks are thus not an issue.
+    session_id.clear();
+    // Our own session id should still be incremented, since it serves also as invocation count
     uid.d++;
+
     cleanup_intermediates();
     managed_state.gke_failure();
     add_task(std::chrono::high_resolution_clock::now(), [this] { JOIN(); });
 }
+
+void KeyExchangeManager::check_finished()
+{
+    if (state == STATE::computekey_done && ra_state == RA_STATE::all_verified)
+        gkexchg_finished();
+}
+
 void KeyExchangeManager::gkexchg_finished()
 {
-    auto atexit = finally([&] { TracyCZoneEnd(gkexchg_context); });
+    auto atexit = finally([&] { TracyCZoneEnd(tracy_startupctx); });
+
+    TracyCZoneEnd(tracy_gkandattest_ctx);
     ZoneScopedN("gkexchg_success");
 
     state = STATE::keyexchg_successful;
+
+    debug("gkexchg_success");
+
     role = JOIN_ROLE::invalid;
     uid.d++;
     evloop.channel_finished();
     has_new_key = true;
 
     ra_prev_round_challenge = chosen_challenge;
+    ra_tp_prev_invocation = std::chrono::high_resolution_clock::now();
+    prev_r1start = jr_ra_params->t_r1start;
 
+    verified_peers.clear();
     cleanup_intermediates();
     managed_state.gke_success();
 }
@@ -885,6 +1122,31 @@ void KeyExchangeLCMHandler::handle_JOIN_response(const lcm::ReceiveBuffer *rbuf,
     TracyFiberEnter(impl.debug_channelname.c_str());
     try {
         impl.on_JOIN_response(join_response);
+    } catch (keyagree_exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
+                  << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    } catch (Botan::Exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname()
+                  << " with BOTAN Exception: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
+    }
+    TracyFiberLeave;
+}
+
+void KeyExchangeLCMHandler::handle_Attestation_Evidence(const lcm::ReceiveBuffer *rbuf,
+                                                        const std::string &chan,
+                                                        const Attestation_Evidence *evidence)
+{
+    TracyFiberEnter(impl.debug_channelname.c_str());
+    try {
+        impl.ra_verify(*evidence);
+    } catch (attestation_exception &e) {
+        std::cerr << "Attestation Exception! keyagree failed on channel"
+                  << channelname() + " with: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
     } catch (keyagree_exception &e) {
         std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
                   << " ! Restarting Key agreement...." << std::endl;
