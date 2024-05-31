@@ -76,8 +76,8 @@ class Dutta_Barua_GKE {
 
   protected:
 
-    std::optional<Botan::secure_vector<uint8_t>> ra_prev_round_challenge;
-    std::optional<Botan::secure_vector<uint8_t>> chosen_challenge;
+    std::optional<std::vector<uint8_t>> ra_prev_round_challenge;
+    std::optional<std::vector<uint8_t>> chosen_challenge;
 
     GkexchgManagedState managed_state;
     STATE state{STATE::keyexchg_not_started};

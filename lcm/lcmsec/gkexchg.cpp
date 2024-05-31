@@ -229,8 +229,10 @@ void KeyExchangeManager::JOIN()
     join.certificate.x509_certificate_BER = cert.BER_encode();
     join.certificate.cert_size = join.certificate.x509_certificate_BER.size();
 
-    // chosen_challenge = RA::sample_challenge(); FIXME
-    // join.attestation_challenge 
+    auto &rng = Botan::system_rng();
+    rng.randomize(join.attestation_challenge, join.att_randomness_bytes);
+    chosen_challenge = std::vector<uint8_t>(join.attestation_challenge,
+                                            join.attestation_challenge + join.att_randomness_bytes);
 
     sign_msg(join);
 
@@ -352,29 +354,40 @@ void KeyExchangeManager::JOIN_response()
 
     // Attestation management
     if (response.role == Dutta_Barua_JOIN_response::ROLE_JOINING) {
-        // IF we are joining, we previously chose a challenge
-        // response.att_challenge = chosen_challenge;
+        // IF we are joining, we previously chose a challenge; reuse it
+        std::copy(chosen_challenge.value().begin(), chosen_challenge.value().end(),
+                  response.att_challenge);
+
+    } else {
+        assert(response.role == Dutta_Barua_JOIN_response::ROLE_PARTICIPANT);
+        // Since we are already a participant, we have knowledge of the challenge that was used in
+        // the previous keyagreement/attestation round.
         //
-        // response.observed_challenges.resize(ra_challenges.size());
-        // std::copy(ra_challenges.begin(), ra_challenges.end(), response.observed_challenges.begin());
-    //     response.n_observed_challenges = response.observed_challenges.size();
-    //     response.att_randomlocal = 0;  // Unused here
-    // } else {
-    //     assert(response.role == Dutta_Barua_JOIN_response::ROLE_PARTICIPANT);
-    //     // Since we are already a participant, we have knowledge of the challenge that was used in
-    //     // the previous keyagreement/attestation round.
-    //     //
-    //     // Derive challenge from random number, accepted r1 start timestamp and previous challenge
-    //     //
-    //     auto &rng = Botan::system_rng();
-    //     response.att_randomlocal =
-    //
-    //     std::vector<uint8_t> hkdf_input.
-    //         //FIXME / this is sloppy, fixup data types for ra
-    //
-    //     auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");
-    //     auto derived_key = kdf->derive_key(derived_key_len, input_secret, salt, label);
+        // Derive challenge from random number, accepted r1 start timestamp and previous
+        auto &rng = Botan::system_rng();
+        rng.randomize(response.att_randomlocal, response.att_randomness_bytes);
+
+        static std::vector<uint8_t> challenge_buffer;  // FIXME this should be member
+        challenge_buffer.clear();
+        challenge_buffer.insert(challenge_buffer.end(), ra_prev_round_challenge.value().begin(),
+                                ra_prev_round_challenge.value().end());
+        challenge_buffer.insert(challenge_buffer.end(), response.att_randomlocal,
+                                response.att_randomlocal + response.att_randomness_bytes);
+        for (int i = 0; i < 8; i++) {
+            uint8_t t1_byte = response.timestamp_r1start_us >> (i * 8) & 0xFF;  // extract bytes
+            challenge_buffer.push_back(t1_byte);
+        }
+
+        auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");
+        auto challenge = kdf->derive_key(32, challenge_buffer, std::vector<uint8_t>{},
+                               std::vector<uint8_t>{});  // derive without salt/label
+
+        assert(challenge.size() == 32);
+        std::copy(challenge.begin(), challenge.end(), response.att_challenge);
     }
+
+    response.att_observed_challenges = ra_challenges;
+    response.n_observed_challenges = ra_challenges.size();
 
     sign_msg(response);
     std::string ch = std::string("join_resp") + groupexchg_channelname;
@@ -532,7 +545,8 @@ void KeyExchangeManager::onJOIN(const Dutta_Barua_JOIN *join_msg)
                   .count()) +
           "milliseconds");
     observed_joins.push_back(joindesc{remote_uid.value(), join_msg->timestamp_r1start_us});
-    ra_challenges.emplace_back(join_msg->attestation_challenge, join_msg->attestation_challenge + join_msg->att_randomness_bytes);
+    ra_challenges.emplace_back(join_msg->attestation_challenge,
+                               join_msg->attestation_challenge + join_msg->att_randomness_bytes);
     add_task(response_timepoint, [this] { JOIN_response(); });
 }
 
@@ -796,6 +810,9 @@ void KeyExchangeManager::gkexchg_finished()
     uid.d++;
     evloop.channel_finished();
     has_new_key = true;
+
+    ra_prev_round_challenge = chosen_challenge;
+
     cleanup_intermediates();
     managed_state.gke_success();
 }
