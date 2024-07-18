@@ -160,13 +160,17 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     std::string debug_channelname;
     std::string mcastgroup;
 
-    const std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
-        125);  // delay start of round1 after the first join() by this time
-    const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
-    const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
-    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(800);
+    // const std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
+    //     125);  // delay start of round1 after the first join() by this time
+    // const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
+    // const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
+    // const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(800);
 
-    const std::chrono::milliseconds ra_t_variance = std::chrono::milliseconds(20);
+    const std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
+        1000);  // delay start of round1 after the first join() by this time
+    const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(300);
+    const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(200);
+    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(7000);
 
     [[nodiscard]] virtual inline STATE &getState() override { return state; }
 
