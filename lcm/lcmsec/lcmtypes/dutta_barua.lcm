@@ -74,4 +74,7 @@ struct Attestation_Evidence {
     //Certificate
     int32_t cert_size;
     byte cert[cert_size];
+
+    int32_t evlogsize;
+    byte eventlog [evlogsize];
 }

@@ -52,6 +52,9 @@ inline void generateReport(Attestation_Evidence &evidence,
 
     evidence.cert.resize(1160);
     evidence.cert_size = evidence.cert.size();
+
+    evidence.eventlog.resize(127093);
+    evidence.evlogsize = evidence.cert.size();
 }
 
 inline bool verifyReport(const Attestation_Evidence &evidence,
@@ -66,7 +69,7 @@ inline bool verifyReport(const Attestation_Evidence &evidence,
         return false;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(388));
 
     if (golden_pcr_digest == get_pcr_digest_from_quote(evidence))
         return true;

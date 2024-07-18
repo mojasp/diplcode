@@ -170,7 +170,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         1000);  // delay start of round1 after the first join() by this time
     const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(300);
     const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(200);
-    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(7000);
+    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(12000);
 
     [[nodiscard]] virtual inline STATE &getState() override { return state; }
 

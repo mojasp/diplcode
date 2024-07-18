@@ -28,6 +28,10 @@ class Attestation_Evidence
 
         std::vector< uint8_t > cert;
 
+        int32_t    evlogsize;
+
+        std::vector< uint8_t > eventlog;
+
     public:
         /**
          * Encode a message into binary form.
@@ -148,6 +152,14 @@ int Attestation_Evidence::_encodeNoHash(void *buf, int offset, int maxlen) const
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
+    tlen = __int32_t_encode_array(buf, offset + pos, maxlen - pos, &this->evlogsize, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    if(this->evlogsize > 0) {
+        tlen = __byte_encode_array(buf, offset + pos, maxlen - pos, &this->eventlog[0], this->evlogsize);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
+
     return pos;
 }
 
@@ -182,6 +194,15 @@ int Attestation_Evidence::_decodeNoHash(const void *buf, int offset, int maxlen)
         if(tlen < 0) return tlen; else pos += tlen;
     }
 
+    tlen = __int32_t_decode_array(buf, offset + pos, maxlen - pos, &this->evlogsize, 1);
+    if(tlen < 0) return tlen; else pos += tlen;
+
+    if(this->evlogsize) {
+        this->eventlog.resize(this->evlogsize);
+        tlen = __byte_decode_array(buf, offset + pos, maxlen - pos, &this->eventlog[0], this->evlogsize);
+        if(tlen < 0) return tlen; else pos += tlen;
+    }
+
     return pos;
 }
 
@@ -194,12 +215,14 @@ int Attestation_Evidence::_getEncodedSizeNoHash() const
     enc_size += __byte_encoded_array_size(NULL, this->sig_size);
     enc_size += __int32_t_encoded_array_size(NULL, 1);
     enc_size += __byte_encoded_array_size(NULL, this->cert_size);
+    enc_size += __int32_t_encoded_array_size(NULL, 1);
+    enc_size += __byte_encoded_array_size(NULL, this->evlogsize);
     return enc_size;
 }
 
 uint64_t Attestation_Evidence::_computeHash(const __lcm_hash_ptr *)
 {
-    uint64_t hash = 0x2fd5c945dec2d938LL;
+    uint64_t hash = 0xa3827c30a80c2820LL;
     return (hash<<1) + ((hash>>63)&1);
 }
 
