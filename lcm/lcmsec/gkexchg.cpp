@@ -1055,14 +1055,27 @@ void KeyExchangeManager::handle_static_attestation_request(
 
     ra_static_ctx.selfID = get_selfID(uid.u, managed_state.get_participants());
     ra_static_ctx.sizeP = managed_state.get_participants().size();
-    ra_static_ctx.leftchild = 2 * ra_static_ctx.selfID;
-    ra_static_ctx.rightchild = 2 * ra_static_ctx.selfID + 1;
-    CRYPTO_DBG("%i %i, %i, %i\n", ra_static_ctx.selfID, ra_static_ctx.sizeP,
-               ra_static_ctx.leftchild, ra_static_ctx.rightchild);
+    ra_static_ctx.verified.clear();
 
-    assert(ra_static_ctx.prev_dynamic_invocation_challenge.size() == 32);
-    assert(ra_static_ctx.req->att_randomness_bytes == 32);
-    assert(sizeof(ra_static_ctx.req->timestamp_static_att_start == 8));
+    add_task(protocolstart, [this]() { ra_static_start(); });
+}
+
+void KeyExchangeManager::ra_static_start()
+{
+    TracyCZoneN(tracyctx, "ra_static", 1);
+    TRACY_ASSIGN_CTX(tracy_attest_static_ctx, tracyctx);
+    std::cerr << "starting static ra protocol" << std::endl;
+    assert(ra_static_ctx.req);
+
+    // add timeout task to ensure termination
+    const auto ra_static_timeout =
+        std::chrono::high_resolution_clock::now() + std::chrono::seconds{8};
+    add_task(ra_static_timeout, [this, startproto = ra_static_ctx.req->timestamp_static_att_start] {
+        auto hr_startproto =
+            std::chrono::high_resolution_clock::time_point{std::chrono::microseconds(startproto)};
+        if (ra_static_ctx.prev_invoc < hr_startproto)
+            throw attestation_exception("static group key agreement timed out");
+    });
 
     ra_static_ctx.buffer.resize(32 + 32 + 8);
 
@@ -1085,31 +1098,7 @@ void KeyExchangeManager::handle_static_attestation_request(
     auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");  // FIXME keepalive
     ra_static_ctx.challenge = kdf->derive_key(32, ra_static_ctx.buffer.data(), 72);
 
-    ra_static_ctx.left_done = ra_static_ctx.leftchild > ra_static_ctx.sizeP;
-    ra_static_ctx.right_done = ra_static_ctx.rightchild > ra_static_ctx.sizeP;
-
-    add_task(protocolstart, [this]() { ra_static_start(); });
-}
-
-void KeyExchangeManager::ra_static_start()
-{
-    TracyCZoneN(tracyctx, "ra_static", 1);
-    TRACY_ASSIGN_CTX(tracy_attest_static_ctx, tracyctx);
-    std::cerr << "starting static ra protocol" << std::endl;
-    assert(ra_static_ctx.req);
-    // timeout task
-    const auto ra_static_timeout =
-        std::chrono::high_resolution_clock::now() + std::chrono::seconds{5};
-    add_task(ra_static_timeout, [this, startproto = ra_static_ctx.req->timestamp_static_att_start] {
-        auto hr_startproto =
-            std::chrono::high_resolution_clock::time_point{std::chrono::microseconds(startproto)};
-        if (ra_static_ctx.prev_invoc < hr_startproto)
-            throw attestation_exception("static group key agreement timed out");
-    });
-
-    if (ra_static_ctx.right_done && ra_static_ctx.left_done && ra_static_state != RA_STATIC_STATE::self_attest_done) {
-        ra_static_async_startattest();
-    }
+    ra_static_async_startattest();
 }
 
 void KeyExchangeManager::ra_static_async_startattest()
@@ -1147,31 +1136,22 @@ void KeyExchangeManager::ra_static_verify(const Attestation_Evidence_Static &evi
 {
     auto sID = evidence.sender_ID;
 
-    std::cout << "static async verify from " << sID << std::endl;
-    if (sID == ra_static_ctx.leftchild or sID == ra_static_ctx.rightchild) {
-        std::cout << "GOT verify from left / right" << std::endl;
-    } else if (sID == 1) {
-        std::cout << "GOT verify from root" << std::endl;
-    } else
-        return;
-
     assert(ra_static_ctx.challenge);
     if (!RA::verifyReportStatic(evidence, ra_static_ctx.challenge.value())){
         std::cout << "Verify report failed" << std::endl;
         return;
     }
-
-    if (sID == 1) {
-        assert(ra_static_state == RA_STATIC_STATE::self_attest_done);
-        // group verification finished successfully
-        TracyCZoneEnd(tracy_attest_static_ctx);
+    ra_static_ctx.verified.push_back(evidence.sender_ID);
+    if(ra_static_ctx.verified.size() == ra_static_ctx.sizeP){
         std::cout << "VERIFY STATIC GROUP SUCCESS" << std::endl;
         ra_static_ctx.prev_invoc = std::chrono::high_resolution_clock::time_point(
             std::chrono::microseconds(ra_static_ctx.req->timestamp_static_att_start));
+        TracyCZoneEnd(tracy_attest_static_ctx);
 
         // Re-initiate static protocol
         ra_static_state = RA_STATIC_STATE::not_started;
         ra_static_ctx.req = {};
+        ra_static_ctx.verified.clear();
         using namespace std::chrono;
         int variance_us = duration_cast<microseconds>(ra_static_variance).count();
         srand(std::chrono::system_clock::now().time_since_epoch().count());
@@ -1180,26 +1160,6 @@ void KeyExchangeManager::ra_static_verify(const Attestation_Evidence_Static &evi
         auto req_time = now + ra_static_interval + microseconds(us_offset);
         add_task(req_time, [=, this]() { ra_static_init(); });
         return;
-    }
-    if (sID == ra_static_ctx.leftchild) {
-        if (ra_static_ctx.left_done) {
-            throw attestation_exception(
-                "Attestation of static group; got evidence from left child but left child is "
-                "already verified.");
-        }
-        ra_static_ctx.left_done = true;
-    }
-    if (sID == ra_static_ctx.rightchild) {
-        if (ra_static_ctx.right_done) {
-            throw attestation_exception(
-                "Attestation of static group; got evidence from right child but left right is "
-                "already verified.");
-        }
-        ra_static_ctx.right_done = true;
-    }
-    if (ra_static_ctx.right_done && ra_static_ctx.left_done &&
-        ra_static_state != RA_STATIC_STATE::self_attest_done) {
-        add_task([this] { ra_static_async_startattest(); });
     }
 }
 
