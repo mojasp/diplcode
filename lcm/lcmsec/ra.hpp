@@ -5,13 +5,13 @@
 #include <botan/system_rng.h>
 #include <lcmsec/dsa.h>
 
-#include "lcmsec/eventloop.hpp"
-
 #include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
+
+#include "lcmsec/lcmtypes/Attestation_Evidence_Static.hpp"
 namespace RA {
 
 inline bool simulate_attest()
@@ -57,15 +57,48 @@ inline void generateReport(Attestation_Evidence &evidence,
     evidence.evlogsize = evidence.cert.size();
 }
 
+inline void generateReportStatic(Attestation_Evidence_Static &evidence,
+                                 const Botan::secure_vector<uint8_t> &challenge, int senderID)
+{
+    evidence.quote.resize(738);
+    evidence.quote_size = evidence.quote.size();
+
+    assert(challenge.size() < evidence.quote.size());
+    std::copy(challenge.cbegin(), challenge.cend(), evidence.quote.begin());
+
+    evidence.quote_signature.resize(71);
+    evidence.sig_size = evidence.quote_signature.size();
+
+    evidence.sender_ID = senderID;
+}
+
+inline bool verifyReportStatic(const Attestation_Evidence_Static &evidence,
+                               const Botan::secure_vector<uint8_t> &challenge)
+{
+    static int golden_pcr_digest = 20;
+    auto get_pcr_digest_from_quote = [](const Attestation_Evidence_Static &evidence) { return 20; };
+
+    if (!std::equal(challenge.cbegin(), challenge.cend(), evidence.quote.cbegin())) {
+        std::cerr << "joint challenge mismatch in verify!! verify failed\n";
+        return false;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    if (golden_pcr_digest == get_pcr_digest_from_quote(evidence))
+        return true;
+    return false;
+}
+
 inline bool verifyReport(const Attestation_Evidence &evidence,
                          const Botan::secure_vector<uint8_t> &challenge)
 {
-    // DUMMMY FUNCTIONALITY -- BUT STILL CHECK IF COLLECTIVE CHALLENGE IS CORECT
+    // DUMMMY FUNCTIONALITY -- BUT STILL CHECK IF COLLECTIVE CHALLENGE IS CORRECT
     static int golden_pcr_digest = 20;
     auto get_pcr_digest_from_quote = [](const Attestation_Evidence &evidence) { return 20; };
 
     if (!std::equal(challenge.cbegin(), challenge.cend(), evidence.quote.cbegin())) {
-        std::cerr << "joint challenge missmatch in verify!! verify failed\n";
+        std::cerr << "joint challenge mismatch in verify!! verify failed\n";
         return false;
     }
 

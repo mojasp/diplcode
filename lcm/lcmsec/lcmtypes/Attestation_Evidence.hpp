@@ -23,7 +23,7 @@ class Attestation_Evidence
 
         std::vector< uint8_t > quote_signature;
 
-        /// Certificate
+        /// AK Certificate
         int32_t    cert_size;
 
         std::vector< uint8_t > cert;

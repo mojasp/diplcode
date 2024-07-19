@@ -23,10 +23,13 @@
 #include "lcmsec/lcmexcept.hpp"
 #include "lcmsec/lcmsec_util.h"
 #include "lcmsec/lcmtypes/Attestation_Evidence.hpp"
+#include "lcmsec/lcmtypes/Attestation_Evidence_Static.hpp"
+#include "lcmsec/lcmtypes/Attestation_Request_Static.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
 #include "lcmsec/ra.hpp"
+#include "lcmsec/state.hpp"
 
 namespace lcmsec_impl {
 
@@ -948,7 +951,7 @@ void KeyExchangeManager::ra_attest_asnyc()
     if (jr_ra_params->t_r1start <= prev_r1start) {
         throw attestation_exception(
             "r1start of accepted joinresponse earlier than the chosne r1start of a previous "
-            "protocl invocation ");
+            "protocol invocation ");
     }
     debug("attest_async");
 
@@ -995,6 +998,211 @@ void KeyExchangeManager::ra_attest_finish()
     lcm.publish(ch, &evidence);
 }
 
+void KeyExchangeManager::ra_static_init()
+{
+    std::cout << "static ra init " << std::endl;
+
+    Attestation_Request_Static req;
+    assert(ra_prev_round_challenge);
+    assert(ra_prev_round_challenge.value().size() == req.att_randomness_bytes);
+
+    auto now = std::chrono::high_resolution_clock::now();
+    const std::chrono::milliseconds td{700};
+    req.timestamp_static_att_start =
+        std::chrono::time_point_cast<std::chrono::microseconds>(now + td)
+            .time_since_epoch()
+            .count();
+    if (ra_static_ctx.req &&
+        req.timestamp_static_att_start > ra_static_ctx.req->timestamp_static_att_start)
+        return;  // dont send unnsecessary msg
+
+    auto diff_to_last = std::chrono::high_resolution_clock::now() - ra_static_ctx.prev_invoc;
+    if (diff_to_last < ra_static_interval)
+        return;
+
+    auto &rng = Botan::system_rng();
+    rng.randomize(req.att_randomlocal, req.att_randomness_bytes);
+
+    std::string ch = std::string("attest_sr_") + groupexchg_channelname;
+    lcm.publish(ch, &req);
+}
+
+static int get_selfID(int uid, const std::vector<int> &participants)
+{
+    // our own ID or protocolUID is our index in the participants vector
+    auto it = std::find(participants.begin(), participants.end(), uid);
+    assert(it != participants.end());                    // element is always present
+    return std::distance(participants.begin(), it) + 1;  // 1-indexing here
+}
+
+void KeyExchangeManager::handle_static_attestation_request(
+    const Attestation_Request_Static &request)
+{
+    std::cerr << "static handlereq" << std::endl;
+
+    std::chrono::high_resolution_clock::time_point protocolstart{
+        std::chrono::microseconds(request.timestamp_static_att_start)};
+    if (protocolstart < ra_static_ctx.prev_invoc) {
+        return;
+    }
+
+    if (!ra_static_ctx.req)
+        ra_static_ctx.req = request;
+    else if (ra_static_ctx.req->timestamp_static_att_start > request.timestamp_static_att_start) {
+        ra_static_ctx.req = request;
+    } else
+        return;
+
+    ra_static_ctx.selfID = get_selfID(uid.u, managed_state.get_participants());
+    ra_static_ctx.sizeP = managed_state.get_participants().size();
+    ra_static_ctx.leftchild = 2 * ra_static_ctx.selfID;
+    ra_static_ctx.rightchild = 2 * ra_static_ctx.selfID + 1;
+    CRYPTO_DBG("%i %i, %i, %i\n", ra_static_ctx.selfID, ra_static_ctx.sizeP,
+               ra_static_ctx.leftchild, ra_static_ctx.rightchild);
+
+    assert(ra_static_ctx.prev_dynamic_invocation_challenge.size() == 32);
+    assert(ra_static_ctx.req->att_randomness_bytes == 32);
+    assert(sizeof(ra_static_ctx.req->timestamp_static_att_start == 8));
+
+    ra_static_ctx.buffer.resize(32 + 32 + 8);
+
+    std::copy(ra_static_ctx.prev_dynamic_invocation_challenge.begin(),
+              ra_static_ctx.prev_dynamic_invocation_challenge.end(), ra_static_ctx.buffer.data());
+    std::copy(ra_static_ctx.req->att_randomlocal, ra_static_ctx.req->att_randomlocal + 32,
+              ra_static_ctx.buffer.data() + 32);
+    std::copy(reinterpret_cast<uint8_t *>(&ra_static_ctx.req->timestamp_static_att_start),
+              reinterpret_cast<uint8_t *>(&ra_static_ctx.req->timestamp_static_att_start) +
+                  sizeof(ra_static_ctx.req->timestamp_static_att_start),
+              ra_static_ctx.buffer.data() + 64);
+
+    std::cout << ra_static_ctx.selfID << ": Joint challenge static is ";
+    for (uint8_t byte : ra_static_ctx.buffer) {
+        // Use std::setw(2) to ensure each byte is printed with two characters
+        std::cout << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(byte) << " ";
+    }
+    std::cout << std::dec << std::endl;
+
+    auto kdf = Botan::KDF::create_or_throw("HKDF(SHA-256)");  // FIXME keepalive
+    ra_static_ctx.challenge = kdf->derive_key(32, ra_static_ctx.buffer.data(), 72);
+
+    ra_static_ctx.left_done = ra_static_ctx.leftchild > ra_static_ctx.sizeP;
+    ra_static_ctx.right_done = ra_static_ctx.rightchild > ra_static_ctx.sizeP;
+
+    add_task(protocolstart, [this]() { ra_static_start(); });
+}
+
+void KeyExchangeManager::ra_static_start()
+{
+    TracyCZoneN(tracyctx, "ra_static", 1);
+    TRACY_ASSIGN_CTX(tracy_attest_static_ctx, tracyctx);
+    std::cerr << "starting static ra protocol" << std::endl;
+    assert(ra_static_ctx.req);
+    // timeout task
+    const auto ra_static_timeout =
+        std::chrono::high_resolution_clock::now() + std::chrono::seconds{5};
+    add_task(ra_static_timeout, [this, startproto = ra_static_ctx.req->timestamp_static_att_start] {
+        auto hr_startproto =
+            std::chrono::high_resolution_clock::time_point{std::chrono::microseconds(startproto)};
+        if (ra_static_ctx.prev_invoc < hr_startproto)
+            throw attestation_exception("static group key agreement timed out");
+    });
+
+    if (ra_static_ctx.right_done && ra_static_ctx.left_done && ra_static_state != RA_STATIC_STATE::self_attest_done) {
+        ra_static_async_startattest();
+    }
+}
+
+void KeyExchangeManager::ra_static_async_startattest()
+{
+    if(ra_static_state == RA_STATIC_STATE::self_attest_done) {
+        return;
+    }
+    ra_static_state = RA_STATIC_STATE::self_attest_done;
+
+    const auto getquote_delay =
+        std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(445);
+    evloop.push_task(getquote_delay, [=, this, invo_cnt = uid.d] {
+        assert(this->uid.d >= invo_cnt);
+        if (invo_cnt != this->uid.d) {
+            return;
+        }
+        ra_static_async_finishattest();
+    });
+}
+
+void KeyExchangeManager::ra_static_async_finishattest()
+{
+    std::cout << "static async finish" << std::endl;
+    assert(ra_static_ctx.challenge);
+    Attestation_Evidence_Static ev;
+    RA::generateReportStatic(ev, ra_static_ctx.challenge.value(), ra_static_ctx.selfID);
+
+
+    std::string ch = std::string("attest_s_") + groupexchg_channelname;
+    lcm.publish(ch, &ev);
+                    // beneficial to parallelize attest
+}
+
+void KeyExchangeManager::ra_static_verify(const Attestation_Evidence_Static &evidence)
+{
+    auto sID = evidence.sender_ID;
+
+    std::cout << "static async verify from " << sID << std::endl;
+    if (sID == ra_static_ctx.leftchild or sID == ra_static_ctx.rightchild) {
+        std::cout << "GOT verify from left / right" << std::endl;
+    } else if (sID == 1) {
+        std::cout << "GOT verify from root" << std::endl;
+    } else
+        return;
+
+    assert(ra_static_ctx.challenge);
+    if (!RA::verifyReportStatic(evidence, ra_static_ctx.challenge.value())){
+        std::cout << "Verify report failed" << std::endl;
+        return;
+    }
+
+    if (sID == 1) {
+        assert(ra_static_state == RA_STATIC_STATE::self_attest_done);
+        // group verification finished successfully
+        TracyCZoneEnd(tracy_attest_static_ctx);
+        std::cout << "VERIFY STATIC GROUP SUCCESS" << std::endl;
+        ra_static_ctx.prev_invoc = std::chrono::high_resolution_clock::time_point(
+            std::chrono::microseconds(ra_static_ctx.req->timestamp_static_att_start));
+
+        // Re-initiate static protocol
+        ra_static_state = RA_STATIC_STATE::not_started;
+        ra_static_ctx.req = {};
+        using namespace std::chrono;
+        int variance_us = duration_cast<microseconds>(ra_static_variance).count();
+        srand(std::chrono::system_clock::now().time_since_epoch().count());
+        int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
+        auto now = high_resolution_clock::now();
+        auto req_time = now + ra_static_interval + microseconds(us_offset);
+        add_task(req_time, [=, this]() { ra_static_init(); });
+        return;
+    }
+    if (sID == ra_static_ctx.leftchild) {
+        if (ra_static_ctx.left_done) {
+            throw attestation_exception(
+                "Attestation of static group; got evidence from left child but left child is "
+                "already verified.");
+        }
+        ra_static_ctx.left_done = true;
+    }
+    if (sID == ra_static_ctx.rightchild) {
+        if (ra_static_ctx.right_done) {
+            throw attestation_exception(
+                "Attestation of static group; got evidence from right child but left right is "
+                "already verified.");
+        }
+        ra_static_ctx.right_done = true;
+    }
+    if (ra_static_ctx.right_done && ra_static_ctx.left_done &&
+        ra_static_state != RA_STATIC_STATE::self_attest_done) {
+        add_task([this] { ra_static_async_startattest(); });
+    }
+}
+
 void KeyExchangeManager::gkexchg_failure()
 {
     auto atexit = finally([&] { TracyCZoneEnd(tracy_startupctx); });
@@ -1004,6 +1212,9 @@ void KeyExchangeManager::gkexchg_failure()
     TracyCZoneEnd(tracy_gkandattest_ctx);
     ZoneScopedN("gkexchg_failure");
 
+    ra_static_ctx.prev_invoc=std::chrono::high_resolution_clock::time_point{};
+    ra_static_ctx.req={};
+
     ra_tp_prev_invocation = std::chrono::high_resolution_clock::now();
     verified_peers.clear();
     ra_state = RA_STATE::not_started;
@@ -1012,8 +1223,8 @@ void KeyExchangeManager::gkexchg_failure()
     role = JOIN_ROLE::invalid;
 
     // clear session id; since the session is now over. Any new session will use fully newly
-    // generated secrets, there is no more active group from the point of view of this user. Replay
-    // attacks are thus not an issue.
+    // generated secrets, there is no more active group from the point of view of this user.
+    // Replay attacks are thus not an issue.
     session_id.clear();
     // Our own session id should still be incremented, since it serves also as invocation count
     uid.d++;
@@ -1025,8 +1236,9 @@ void KeyExchangeManager::gkexchg_failure()
 
 void KeyExchangeManager::check_finished()
 {
-    if (state == STATE::computekey_done && ra_state == RA_STATE::all_verified)
+    if (state == STATE::computekey_done && ra_state == RA_STATE::all_verified) {
         gkexchg_finished();
+    }
 }
 
 void KeyExchangeManager::gkexchg_finished()
@@ -1049,9 +1261,24 @@ void KeyExchangeManager::gkexchg_finished()
     ra_tp_prev_invocation = std::chrono::high_resolution_clock::now();
     prev_r1start = jr_ra_params->t_r1start;
 
+    ra_static_ctx.prev_dynamic_invocation_challenge.resize(joint_challenge.size());
+    std::copy(joint_challenge.begin(), joint_challenge.end(),
+              ra_static_ctx.prev_dynamic_invocation_challenge.begin());
+    ra_static_ctx.prev_invoc=std::chrono::high_resolution_clock::time_point{};
+    ra_static_ctx.req={};
+
     verified_peers.clear();
     cleanup_intermediates();
     managed_state.gke_success();
+
+    // Initiate static protocol a fixed time int the future
+    using namespace std::chrono;
+    int variance_us = duration_cast<microseconds>(ra_static_variance).count();
+    srand(std::chrono::system_clock::now().time_since_epoch().count());
+    int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
+    auto now = high_resolution_clock::now();
+    auto req_time = now + ra_static_interval + microseconds(us_offset);
+    add_task(req_time, [=, this]() { ra_static_init(); });
 }
 
 Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_size)
@@ -1067,8 +1294,8 @@ Botan::secure_vector<uint8_t> KeyExchangeManager::get_session_key(size_t key_siz
         shared_secret->encode(Botan::PointGFp::Compression_Type::UNCOMPRESSED);
 
     // set salt and label to empty vector. This is the same thing that the kdf->encode(size_t,
-    // Botan::secure_vector<uint8_t>) overload does, however, it cannot deal with an std::vector.
-    // Converting vectors is not possible without copying, so we do this instead
+    // Botan::secure_vector<uint8_t>) overload does, however, it cannot deal with an
+    // std::vector. Converting vectors is not possible without copying, so we do this instead
     static const std::vector<uint8_t> empty;
 
     return kdf->derive_key(key_size, MOV(encoded), empty, empty);
@@ -1122,6 +1349,56 @@ void KeyExchangeLCMHandler::handle_JOIN_response(const lcm::ReceiveBuffer *rbuf,
     TracyFiberEnter(impl.debug_channelname.c_str());
     try {
         impl.on_JOIN_response(join_response);
+    } catch (keyagree_exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
+                  << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    } catch (Botan::Exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname()
+                  << " with BOTAN Exception: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
+    }
+    TracyFiberLeave;
+}
+
+void KeyExchangeLCMHandler::handle_Attestation_Request_Static(
+    const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+    const Attestation_Request_Static *request)
+{
+    TracyFiberEnter(impl.debug_channelname.c_str());
+    try {
+        impl.handle_static_attestation_request(*request);
+    } catch (attestation_exception &e) {
+        std::cerr << "Attestation Exception! keyagree failed on channel"
+                  << channelname() + " with: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
+    } catch (keyagree_exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
+                  << " ! Restarting Key agreement...." << std::endl;
+        impl.gkexchg_failure();
+    } catch (Botan::Exception &e) {
+        std::cerr << "keyagree failed on channel" << channelname()
+                  << " with BOTAN Exception: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
+    }
+    TracyFiberLeave;
+}
+
+void KeyExchangeLCMHandler::handle_Attestation_Evidence_Static(
+    const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+    const Attestation_Evidence_Static *evidence)
+{
+    TracyFiberEnter(impl.debug_channelname.c_str());
+    try {
+        impl.ra_static_verify(*evidence);
+    } catch (attestation_exception &e) {
+        std::cerr << "Attestation Exception! keyagree failed on channel"
+                  << channelname() + " with: " << e.what() << " ! Restarting Key agreement...."
+                  << std::endl;
+        impl.gkexchg_failure();
     } catch (keyagree_exception &e) {
         std::cerr << "keyagree failed on channel" << channelname() + " with: " << e.what()
                   << " ! Restarting Key agreement...." << std::endl;
