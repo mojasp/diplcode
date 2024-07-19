@@ -102,7 +102,7 @@ inline bool verifyReport(const Attestation_Evidence &evidence,
         return false;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(388));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     if (golden_pcr_digest == get_pcr_digest_from_quote(evidence))
         return true;
