@@ -1169,16 +1169,18 @@ void KeyExchangeManager::ra_static_verify(const Attestation_Evidence_Static &evi
         ra_static_ctx.prev_invoc = std::chrono::high_resolution_clock::time_point(
             std::chrono::microseconds(ra_static_ctx.req->timestamp_static_att_start));
 
-        // Re-initiate static protocol
-        ra_static_state = RA_STATIC_STATE::not_started;
-        ra_static_ctx.req = {};
-        using namespace std::chrono;
-        int variance_us = duration_cast<microseconds>(ra_static_variance).count();
-        srand(std::chrono::system_clock::now().time_since_epoch().count());
-        int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
-        auto now = high_resolution_clock::now();
-        auto req_time = now + ra_static_interval + microseconds(us_offset);
-        add_task(req_time, [=, this]() { ra_static_init(); });
+        // COMMENTED OUT SOLELY FOR MEASUREMENTS
+        //
+        // Re-initiate static protocol 
+        // ra_static_state = RA_STATIC_STATE::not_started;
+        // ra_static_ctx.req = {};
+        // using namespace std::chrono;
+        // int variance_us = duration_cast<microseconds>(ra_static_variance).count();
+        // srand(std::chrono::system_clock::now().time_since_epoch().count());
+        // int us_offset = (std::rand() % (2 * variance_us)) - variance_us;
+        // auto now = high_resolution_clock::now();
+        // auto req_time = now + ra_static_interval + microseconds(us_offset);
+        // add_task(req_time, [=, this]() { ra_static_init(); });
         return;
     }
     if (sID == ra_static_ctx.leftchild) {
