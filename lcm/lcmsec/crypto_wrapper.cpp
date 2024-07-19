@@ -167,7 +167,7 @@ class _lcm_security_ctx {
     _lcm_security_ctx(lcm_security_parameters *params)
     {
         std::string algorithm;
-        if(params->algorithm==NULL)
+        if (params->algorithm == NULL)
             algorithm = std::string("AES-128/GCM");
         else
             algorithm = params->algorithm;
@@ -223,6 +223,12 @@ class _lcm_security_ctx {
                            keyExchangeManager.get());
             lcm->subscribe("attestlcm://" + keyxchg_channel,
                            &lcmsec_impl::KeyExchangeLCMHandler::handle_Attestation_Evidence,
+                           keyExchangeManager.get());
+            lcm->subscribe("attest_s_lcm://" + keyxchg_channel,
+                           &lcmsec_impl::KeyExchangeLCMHandler::handle_Attestation_Evidence_Static,
+                           keyExchangeManager.get());
+            lcm->subscribe("attest_sr_lcm://" + keyxchg_channel,
+                           &lcmsec_impl::KeyExchangeLCMHandler::handle_Attestation_Request_Static,
                            keyExchangeManager.get());
             if (cap.channelname) {
                 char *copy = (char *) malloc(LCM_MAX_CHANNEL_NAME_LENGTH + 1);

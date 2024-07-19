@@ -12,7 +12,6 @@
 #include <vector>
 
 
-/// Lcmtypes used to facilitate dutta barua authenticated group key exchange
 class Dutta_Barua_message
 {
     public:

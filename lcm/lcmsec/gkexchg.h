@@ -16,6 +16,8 @@
 #include "lcm.h"
 #include "lcmsec/eventloop.hpp"
 #include "lcmsec/lcmexcept.hpp"
+#include "lcmsec/lcmtypes/Attestation_Evidence_Static.hpp"
+#include "lcmsec/lcmtypes/Attestation_Request_Static.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_JOIN_response.hpp"
 #include "lcmsec/lcmtypes/Dutta_Barua_message.hpp"
@@ -32,12 +34,13 @@ class Dutta_Barua_GKE {
   protected:
     TracyCZoneCtx tracy_startupctx;
     TracyCZoneCtx tracy_attestctx;
+    TracyCZoneCtx tracy_attest_static_ctx;
     TracyCZoneCtx tracy_gkexchgctx;
     TracyCZoneCtx tracy_gkandattest_ctx;
 
   public:
     virtual void publish(Dutta_Barua_message &msg) = 0;
-    virtual void gkexchg_finished() = 0;          // hook for child to override
+    virtual void gkexchg_finished() = 0;  // hook for child to override
     virtual void check_finished() = 0;
     [[nodiscard]] virtual STATE &getState() = 0;  // hook for child to override
     [[nodiscard]] virtual inline JOIN_ROLE &getRole() = 0;
@@ -104,7 +107,8 @@ class Dutta_Barua_GKE {
 
     GkexchgManagedState managed_state;
     STATE state{STATE::keyexchg_not_started};
-    RA_STATE ra_state {RA_STATE::not_started};
+    RA_STATE ra_state{RA_STATE::not_started};
+    RA_STATIC_STATE ra_static_state{RA_STATIC_STATE::not_started};
     JOIN_ROLE role{JOIN_ROLE::invalid};
 
     static void db_set_public_value(Dutta_Barua_message &msg, const Botan::PointGFp &point);
@@ -112,7 +116,6 @@ class Dutta_Barua_GKE {
 };
 
 class KeyExchangeManager : public Dutta_Barua_GKE {
-
   public:
     // Recovery management:
     //
@@ -136,8 +139,31 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
 
     void ra_attest_asnyc();
     void ra_attest_finish();
+    void ra_verify(const Attestation_Evidence &evidence);
 
-    void ra_verify(const Attestation_Evidence& evidence);
+    struct ra_static_ctx {
+        // references to last round
+        std::chrono::high_resolution_clock::time_point prev_invoc;
+        std::vector<uint8_t> prev_dynamic_invocation_challenge;
+
+        // set during ra_start_static
+        int selfID;
+        int leftchild, rightchild;
+        bool left_done{false}, right_done{false};
+        int sizeP;
+
+        std::optional<Attestation_Request_Static> req;
+
+        std::vector<uint8_t> buffer;
+        std::optional<Botan::secure_vector<uint8_t>> challenge;
+    } ra_static_ctx;
+
+    void ra_static_init();
+    void handle_static_attestation_request(const Attestation_Request_Static &request);
+    void ra_static_start();
+    void ra_static_async_startattest();
+    void ra_static_async_finishattest();
+    void ra_static_verify(const Attestation_Evidence_Static &evidence);
 
     void on_msg(const Dutta_Barua_message *msg);
 
@@ -161,12 +187,10 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     std::string mcastgroup;
 
     const std::chrono::milliseconds JOIN_waitperiod = std::chrono::milliseconds(
-        125);  // delay start of round1 after the first join() by this time
-    const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(50);
-    const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(20);
-    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(800);
-
-    const std::chrono::milliseconds ra_t_variance = std::chrono::milliseconds(20);
+        1000);  // delay start of round1 after the first join() by this time
+    const std::chrono::milliseconds JOIN_response_avg_delay = std::chrono::milliseconds(300);
+    const std::chrono::milliseconds JOIN_response_variance = std::chrono::milliseconds(200);
+    const std::chrono::milliseconds gkexchg_timeout = std::chrono::milliseconds(12000);
 
     [[nodiscard]] virtual inline STATE &getState() override { return state; }
 
@@ -189,6 +213,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     Botan::secure_vector<uint8_t> joint_challenge;
     std::chrono::high_resolution_clock::time_point ra_tp_prev_invocation =
         std::chrono::high_resolution_clock::time_point::min();
+
     std::vector<int> verified_peers;
 
     struct joinresponse_ra_params {
@@ -196,7 +221,7 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         int n_observed_challenges;
 
         int nodes_to_verify;
-        enum class RA_ROLE {joining, representative, passive} ra_role;
+        enum class RA_ROLE { joining, representative, passive } ra_role;
 
         uint8_t challenge[att_randomness_bytes];
         uint8_t randomlocal[att_randomness_bytes];
@@ -204,8 +229,8 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         int64_t t_r1start;
 
         // copy into existing jr_ra_params while reusing memory if possible.
-        void from_JOIN_Response(const Dutta_Barua_JOIN_response *from, int num_joining, int num_participants,
-                                const KeyExchangeManager &mgr);
+        void from_JOIN_Response(const Dutta_Barua_JOIN_response *from, int num_joining,
+                                int num_participants, const KeyExchangeManager &mgr);
 
         // check whether challenge exists in observed_joins from the response; or is equal to the
         // challenge included in the accepted join response
@@ -220,6 +245,11 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
         void prep_joint_challenge(const KeyExchangeManager &mgr);
     };
     std::optional<joinresponse_ra_params> jr_ra_params;
+
+    const std::chrono::seconds ra_static_interval = std::chrono::seconds(4);
+    const std::chrono::seconds ra_static_variance = std::chrono::seconds(1);
+    std::chrono::high_resolution_clock::time_point ra_static_tp_prev_invocation =
+        std::chrono::high_resolution_clock::time_point::min();
 
     void publish(Dutta_Barua_message &msg) override;
     static void db_get_public_value(const Dutta_Barua_message &msg, Botan::BigInt &bigint);
@@ -251,6 +281,10 @@ class KeyExchangeLCMHandler {
 
     void handle_Attestation_Evidence(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                                      const Attestation_Evidence *evidence);
+    void handle_Attestation_Evidence_Static(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                                            const Attestation_Evidence_Static *evidence);
+    void handle_Attestation_Request_Static(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                                           const Attestation_Request_Static *evidence);
 
     bool hasNewKey() { return impl.hasNewKey(); }
     /*

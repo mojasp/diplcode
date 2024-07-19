@@ -43,6 +43,20 @@ inline const char *ra_state_name(RA_STATE s)
                   "sizes dont match");
     return RA_STATE_names[static_cast<int>(s)];
 }
+enum class RA_STATIC_STATE : int {
+    not_started,
+    started,
+    self_attest_done,
+    ENUMSIZE
+};
+
+inline const char *ra_static_state_name(RA_STATE s)
+{
+    static const char *RA_STATIC_STATE_names[] = {"not_stareted", "started",  "done"};
+    static_assert(sizeof(RA_STATIC_STATE_names) / sizeof(char *) == static_cast<int>(RA_STATIC_STATE::ENUMSIZE),
+                  "sizes dont match");
+    return RA_STATIC_STATE_names[static_cast<int>(s)];
+}
 
 }  // namespace lcmsec_impl
 #endif /* end of include guard: STATE_HPP */
