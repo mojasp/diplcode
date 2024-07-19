@@ -142,15 +142,13 @@ class KeyExchangeManager : public Dutta_Barua_GKE {
     void ra_verify(const Attestation_Evidence &evidence);
 
     struct ra_static_ctx {
-        // references to last round
         std::chrono::high_resolution_clock::time_point prev_invoc;
         std::vector<uint8_t> prev_dynamic_invocation_challenge;
 
-        // set during ra_start_static
         int selfID;
-        int leftchild, rightchild;
-        bool left_done{false}, right_done{false};
         int sizeP;
+
+        std::vector<int> verified;
 
         std::optional<Attestation_Request_Static> req;
 
